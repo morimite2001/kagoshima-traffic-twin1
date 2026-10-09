@@ -1,0 +1,34 @@
+name: Update Traffic Data
+
+on:
+  schedule:
+    # 毎時 15分 と 45分 に自動実行（30分ごと）
+    - cron: '15,45 * * * *'
+  # GitHubの画面から手動実行できるようにする設定
+  workflow_dispatch:
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # リポジトリへの書き込み権限を付与
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python環境のセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 交通量データ取得スクリプトを実行
+        run: |
+          python update_traffic.py
+
+      - name: 更新があればGitにコミットしてプッシュ
+        run: |
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git add traffic_data.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto update traffic data [skip ci]" && git push)
