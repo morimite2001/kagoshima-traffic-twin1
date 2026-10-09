@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>鹿児島市 3D交通量統合モニター (様式1〜4対応)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" />
+  <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+
+  <style>
+    body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; height: 100vh; overflow: hidden; }
+    
+    #sidebar {
+      width: 370px;
+      height: 100%;
+      background: #111827;
+      color: #f3f4f6;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 4px 0 16px rgba(0,0,0,0.4);
+      z-index: 10;
+    }
+    .sidebar-header {
+      padding: 16px;
+      background: #1f2937;
+      border-bottom: 1px solid #374151;
+    }
+    .sidebar-header h2 { margin: 0 0 6px 0; font-size: 15px; color: #60a5fa; }
+    
+    /* リクエスト実行ボタン */
+    .btn-request {
+      width: 100%;
+      padding: 10px;
+      background: #2563eb;
+      color: #ffffff;
+      border: none;
+      border-radius: 6px;
+      font-weight: bold;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: background 0.2s;
+    }
+    .btn-request:hover { background: #1d4ed8; }
+    .btn-request:active { transform: scale(0.98); }
+    .status-text { margin-top: 8px; font-size: 11px; color: #10b981; }
+    
+    .ranking-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+    .ranking-item {
+      display: flex;
+      align-items: center;
+      padding: 10px 12px;
+      margin-bottom: 6px;
+      background: #1f2937;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      border-left: 4px solid transparent;
+    }
+    .ranking-item:hover {
+      background: #374151;
+      border-left-color: #60a5fa;
+      transform: translateX(4px);
+    }
+    .rank-num { width: 24px; font-size: 14px; font-weight: bold; color: #9ca3af; }
+    .station-info { flex: 1; margin-left: 6px; }
+    .station-name { font-size: 13px; font-weight: bold; margin-bottom: 2px; }
+    .station-sub { font-size: 11px; color: #9ca3af; }
+    .traffic-val { text-align: right; font-size: 15px; font-weight: bold; color: #f59e0b; }
+    .traffic-unit { font-size: 10px; color: #9ca3af; font-weight: normal; }
+
+    #map { flex: 1; height: 100%; position: relative; background: #0b132b; }
+    
+    .legend {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      background: rgba(17, 24, 39, 0.9);
+      color: #fff;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 11px;
+      display: flex;
+      gap: 12px;
+      z-index: 5;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .legend-color { width: 12px; height: 12px; border-radius: 2px; }
+
+    /* ポップアップ内テーブル装飾 */
+    .popup-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 6px; }
+    .popup-table th, .popup-table td { border: 1px solid #d1d5db; padding: 4px 6px; text-align: center; }
+    .popup-table th { background: #f3f4f6; color: #374151; }
+  </style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div class="sidebar-header">
+    <h2>鹿児島市 交通量統合モニター (全15地点)</h2>
+    <button class="btn-request" id="btn-fetch" onclick="loadTrafficData()">
+      🔄 最新交通量データをリクエスト
+    </button>
+    <p class="status-text" id="status-label">● 待機中</p>
+  </div>
+  <div class="ranking-list" id="ranking-container"></div>
+</div>
+
+<div id="map">
+  <div class="legend">
+    <div class="legend-item"><div class="legend-color" style="background: #3b82f6;"></div> 上り交通量（柱）</div>
+    <div class="legend-item"><div class="legend-color" style="background: #ef4444;"></div> 下り交通量（柱）</div>
+  </div>
+</div>
+
+<script>
+  const map = new maplibregl.Map({
+    container: 'map',
+    style: 'https://tile.openstreetmap.jp/styles/osm-bright-ja/style.json',
+    center: [130.5500, 31.5850],
+    zoom: 11.8,
+    pitch: 58,
+    bearing: -15
+  });
+
+  map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+  let currentPopup = null;
+  let allStations = [];
+
+  function flyToStation(st) {
+    map.flyTo({
+      center: [st.lng, st.lat],
+      zoom: 16.5,
+      pitch: 65,
+      bearing: -15,
+      speed: 1.2
+    });
+
+    if (currentPopup) currentPopup.remove();
+
+    // 様式1〜4の整形
+    function fmt5m(f) {
+      if (!f) return '<td>-</td><td>-</td><td>-</td><td>-</td>';
+      const us = f.up_s ?? '-';
+      const ul = f.up_l ?? '-';
+      const ds = f.down_s ?? '-';
+      const dl = f.down_l ?? '-';
+      return `<td>${us}</td><td>${ul}</td><td>${ds}</td><td>${dl}</td>`;
+    }
+
+    function fmt1h(f) {
+      if (!f) return '<td>-</td><td>-</td><td>-</td><td>-</td>';
+      const us = f.up_s ?? (f.up_tot != null ? `${f.up_tot}(全)` : '-');
+      const ul = f.up_l ?? '-';
+      const ds = f.down_s ?? (f.down_tot != null ? `${f.down_tot}(全)` : '-');
+      const dl = f.down_l ?? '-';
+      return `<td>${us}</td><td>${ul}</td><td>${ds}</td><td>${dl}</td>`;
+    }
+
+    const popupHtml = `
+      <div style="font-size:12px; min-width: 280px; color:#111;">
+        <h4 style="margin:0 0 2px 0; color:#1e40af; font-size:14px;">観測点: ${st.code}</h4>
+        <div style="color:#666; font-size:11px; margin-bottom:6px;">種別: ${st.type}</div>
+        
+        <table class="popup-table">
+          <tr>
+            <th rowspan="2">様式</th>
+            <th colspan="2" style="color:#2563eb;">上り</th>
+            <th colspan="2" style="color:#dc2626;">下り</th>
+          </tr>
+          <tr>
+            <th>小型</th><th>大型</th><th>小型</th><th>大型</th>
+          </tr>
+          <tr>
+            <td><strong>様式1</strong><br>(常設5分)</td>
+            ${fmt5m(st.f1)}
+          </tr>
+          <tr>
+            <td><strong>様式2</strong><br>(常設1時間)</td>
+            ${fmt1h(st.f2)}
+          </tr>
+          <tr>
+            <td><strong>様式3</strong><br>(CCTV 5分)</td>
+            ${fmt5m(st.f3)}
+          </tr>
+          <tr>
+            <td><strong>様式4</strong><br>(CCTV 1時間)</td>
+            ${fmt1h(st.f4)}
+          </tr>
+        </table>
+      </div>
+    `;
+
+    currentPopup = new maplibregl.Popup({ offset: 20 })
+      .setLngLat([st.lng, st.lat])
+      .setHTML(popupHtml)
+      .addTo(map);
+  }
+
+  function createPillarPolygon(centerLng, centerLat, radiusMeters, heightMeters, direction, meta) {
+    const coords = [];
+    const steps = 14;
+    const latOffset = radiusMeters / 111000;
+    const lngOffset = radiusMeters / (111000 * Math.cos(centerLat * Math.PI / 180));
+
+    for (let i = 0; i <= steps; i++) {
+      const angle = (i / steps) * 2 * Math.PI;
+      coords.push([
+        centerLng + lngOffset * Math.cos(angle),
+        centerLat + latOffset * Math.sin(angle)
+      ]);
+    }
+
+    return {
+      "type": "Feature",
+      "geometry": { "type": "Polygon", "coordinates": [coords] },
+      "properties": {
+        "direction": direction,
+        "height": Math.max(heightMeters, 15),
+        "code": meta.code
+      }
+    };
+  }
+
+  async function loadTrafficData() {
+    const statusLabel = document.getElementById('status-label');
+    const btn = document.getElementById('btn-request');
+    statusLabel.innerText = '● JARTIC APIにリクエスト送信中...';
+
+    try {
+      const res = await fetch('./traffic_data.json');
+      const data = await res.json();
+      allStations = data;
+      statusLabel.innerText = `● 全 ${data.length} 地点の最新データ取得完了`;
+
+      const pillarFeatures = [];
+
+      data.forEach(st => {
+        // 代表交通量の決定（様式4の1時間値、または様式1・2の値を利用）
+        let upVal = 0;
+        let downVal = 0;
+
+        if (st.f4) {
+          upVal = (st.f4.up_tot || (st.f4.up_s + st.f4.up_l)) || 0;
+          downVal = (st.f4.down_tot || (st.f4.down_s + st.f4.down_l)) || 0;
+        } else if (st.f2) {
+          upVal = (st.f2.up_s + st.f2.up_l) || 0;
+          downVal = (st.f2.down_s + st.f2.down_l) || 0;
+        } else if (st.f1) {
+          upVal = ((st.f1.up_s + st.f1.up_l) || 0) * 12; // 1時間換算
+          downVal = ((st.f1.down_s + st.f1.down_l) || 0) * 12;
+        }
+
+        st.totalDisplay = upVal + downVal;
+        st.upDisplay = upVal;
+        st.downDisplay = downVal;
+
+        // 柱の高さ（1台あたり0.35m）
+        pillarFeatures.push(createPillarPolygon(
+          st.lng - 0.00022, st.lat, 16, upVal * 0.35, '上り', { code: st.code }
+        ));
+        pillarFeatures.push(createPillarPolygon(
+          st.lng + 0.00022, st.lat, 16, downVal * 0.35, '下り', { code: st.code }
+        ));
+      });
+
+      // 台数順ソート
+      data.sort((a, b) => b.totalDisplay - a.totalDisplay);
+
+      const listContainer = document.getElementById('ranking-container');
+      listContainer.innerHTML = '';
+
+      data.forEach((st, idx) => {
+        const item = document.createElement('div');
+        item.className = 'ranking-item';
+        item.innerHTML = `
+          <div class="rank-num">${idx + 1}</div>
+          <div class="station-info">
+            <div class="station-name">地点: ${st.code} (${st.type})</div>
+            <div class="station-sub">上り:${st.upDisplay} / 下り:${st.downDisplay}</div>
+          </div>
+          <div class="traffic-val">${st.totalDisplay} <span class="traffic-unit">台/時</span></div>
+        `;
+        item.onclick = () => flyToStation(st);
+        listContainer.appendChild(item);
+      });
+
+      // 3Dレイヤー更新
+      if (map.getSource('traffic-pillars')) {
+        map.getSource('traffic-pillars').setData({
+          type: 'FeatureCollection',
+          features: pillarFeatures
+        });
+      } else {
+        map.addSource('traffic-pillars', {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: pillarFeatures }
+        });
+
+        map.addLayer({
+          'id': 'traffic-pillars-3d',
+          'type': 'fill-extrusion',
+          'source': 'traffic-pillars',
+          'paint': {
+            'fill-extrusion-color': [
+              'match', ['get', 'direction'],
+              '上り', '#3b82f6',
+              '下り', '#ef4444',
+              '#fbbf24'
+            ],
+            'fill-extrusion-height': ['get', 'height'],
+            'fill-extrusion-base': 0,
+            'fill-extrusion-opacity': 0.92
+          }
+        });
+
+        map.on('click', 'traffic-pillars-3d', (e) => {
+          const code = e.features[0].properties.code;
+          const st = allStations.find(s => s.code == code);
+          if (st) flyToStation(st);
+        });
+
+        map.on('mouseenter', 'traffic-pillars-3d', () => { map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', 'traffic-pillars-3d', () => { map.getCanvas().style.cursor = ''; });
+      }
+
+    } catch (err) {
+      console.error(err);
+      statusLabel.innerText = '✕ データ取得エラー';
+    }
+  }
+
+  map.on('load', () => {
+    // 3D建物モデル
+    if (map.getSource('openmaptiles')) {
+      map.addLayer({
+        'id': '3d-buildings',
+        'source': 'openmaptiles',
+        'source-layer': 'building',
+        'type': 'fill-extrusion',
+        'minzoom': 13,
+        'paint': {
+          'fill-extrusion-color': '#b0bec5',
+          'fill-extrusion-height': ['case', ['has', 'render_height'], ['get', 'render_height'], 14],
+          'fill-extrusion-base': ['case', ['has', 'render_min_height'], ['get', 'render_min_height'], 0],
+          'fill-extrusion-opacity': 0.82
+        }
+      });
+    }
+
+    // 初回自動ロード
+    loadTrafficData();
+  });
+</script>
+
+</body>
+</html>
