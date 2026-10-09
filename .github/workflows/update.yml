@@ -2,13 +2,9 @@ name: Update Traffic Data
 
 on:
   schedule:
-    # 毎時 15分 と 45分 に自動実行（30分ごと）
+    # 毎時 15分 と 45分 に自動実行（30分間隔）
     - cron: '15,45 * * * *'
   workflow_dispatch:
-
-# Node.js 移行期の警告を制御する環境変数
-env:
-  ACTIONS_RUNNER_FORCE_NODE24: "true"
 
 jobs:
   update-data:
