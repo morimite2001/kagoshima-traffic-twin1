@@ -4,14 +4,17 @@ on:
   schedule:
     # 毎時 15分 と 45分 に自動実行（30分ごと）
     - cron: '15,45 * * * *'
-  # GitHubの画面から手動実行できるようにする設定
   workflow_dispatch:
+
+# Node.js 移行期の警告を制御する環境変数
+env:
+  ACTIONS_RUNNER_FORCE_NODE24: "true"
 
 jobs:
   update-data:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # リポジトリへの書き込み権限を付与
+      contents: write
 
     steps:
       - name: リポジトリをチェックアウト
