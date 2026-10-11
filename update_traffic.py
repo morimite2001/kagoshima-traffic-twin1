@@ -1,5 +1,7 @@
+import csv
 import datetime
 import json
+import os
 import unicodedata
 import urllib.parse
 import urllib.request
@@ -85,6 +87,72 @@ def fetch(layer, time_code):
     return []
 
 
+# ---- 履歴の保存（月ごとのCSV: history/YYYYMM.csv）----
+HISTORY_DIR = "history"
+HISTORY_COLUMNS = [
+    "generated_at", "time_5m", "time_1h", "code", "type",
+    "f1_up", "f1_down", "f2_up", "f2_down",
+    "f3_up", "f3_down", "f4_up", "f4_down", "abnormal",
+]
+
+
+def dir_total(f, d):
+  """方向別の合計台数。様式が無い/値が空なら空文字（0台と区別するため）"""
+  if not f:
+    return ""
+  tot = f.get(f"{d}_tot")
+  if tot is not None:
+    return tot
+  s, l = f.get(f"{d}_s"), f.get(f"{d}_l")
+  if s is None and l is None:
+    return ""
+  return (s or 0) + (l or 0)
+
+
+def abnormal_of(st):
+  """値が「1」(異常)のフラグ名を '|' でつなぐ（様式1・2・3のフラグが対象）"""
+  names = []
+  for key in ("f1", "f2", "f3"):
+    for k, v in ((st.get(key) or {}).get("flags") or {}).items():
+      if str(v) == "1" and k not in names:
+        names.append(k)
+  return "|".join(names)
+
+
+def save_history(station_list):
+  """1回の取得結果を、月ごとのCSVに追記する（同じ時刻・同じ地点は二重に書かない）"""
+  os.makedirs(HISTORY_DIR, exist_ok=True)
+  path = os.path.join(HISTORY_DIR, f"{code_5m[:6]}.csv")
+  new_file = not os.path.exists(path)
+  seen = set()
+  if not new_file:
+    with open(path, encoding="utf-8-sig", newline="") as fh:
+      for r in csv.DictReader(fh):
+        seen.add((r["time_5m"], r["code"]))
+  rows = []
+  for st in station_list:
+    if (st["time_5m"], st["code"]) in seen:
+      continue
+    rows.append([
+        st["generated_at"], st["time_5m"], st["time_1h"], st["code"], st["type"],
+        dir_total(st["f1"], "up"), dir_total(st["f1"], "down"),
+        dir_total(st["f2"], "up"), dir_total(st["f2"], "down"),
+        dir_total(st["f3"], "up"), dir_total(st["f3"], "down"),
+        dir_total(st["f4"], "up"), dir_total(st["f4"], "down"),
+        abnormal_of(st),
+    ])
+  if not rows:
+    print("履歴: 追記なし（同じ時刻のデータは保存済み）")
+    return
+  # 新規作成時だけBOM付きにして、Excelでも文字化けしないようにする
+  with open(path, "a", encoding="utf-8-sig" if new_file else "utf-8", newline="") as fh:
+    w = csv.writer(fh)
+    if new_file:
+      w.writerow(HISTORY_COLUMNS)
+    w.writerows(rows)
+  print(f"履歴: {len(rows)} 行を {path} に追記しました。")
+
+
 def main():
   print(f"JARTIC API リクエスト開始: 5分={code_5m} / 1時間={code_1h}")
   f1 = fetch("t_travospublic_measure_5m", code_5m)
@@ -148,6 +216,12 @@ def main():
     json.dump(list(stations.values()), out, ensure_ascii=False, indent=2)
 
   print(f"更新完了: {len(stations)} 地点を保存しました。")
+
+  # 履歴の保存に失敗しても、上の traffic_data.json の更新には影響させない
+  try:
+    save_history(list(stations.values()))
+  except Exception as e:
+    print(f"履歴の保存に失敗しました: {e}")
 
 
 if __name__ == "__main__":
