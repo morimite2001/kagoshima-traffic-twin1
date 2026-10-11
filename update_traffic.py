@@ -6,7 +6,8 @@ import unicodedata
 import urllib.parse
 import urllib.request
 
-BBOX = "130.386,31.293,130.730,31.753"
+# 南端を 31.293 → 31.285 に広げ、南端ぎりぎりにある地点(9811950)を含める
+BBOX = "130.386,31.285,130.730,31.753"
 
 # 日本時間 (UTC+9) の現在時刻を取得
 now_utc = datetime.datetime.now(datetime.timezone.utc)
@@ -103,10 +104,10 @@ def dir_total(f, d):
   tot = f.get(f"{d}_tot")
   if tot is not None:
     return tot
-  s, l = f.get(f"{d}_s"), f.get(f"{d}_l")
-  if s is None and l is None:
+  s, l, u = f.get(f"{d}_s"), f.get(f"{d}_l"), f.get(f"{d}_u")
+  if s is None and l is None and u is None:
     return ""
-  return (s or 0) + (l or 0)
+  return (s or 0) + (l or 0) + (u or 0)
 
 
 def abnormal_of(st):
@@ -194,6 +195,9 @@ def main():
           "up_l": p.get("上り・大型交通量"),
           "down_s": p.get("下り・小型交通量"),
           "down_l": p.get("下り・大型交通量"),
+          # 車種判別不能（小型・大型に分けられなかった台数）も合計に含める
+          "up_u": p.get("上り・車種判別不能交通量"),
+          "down_u": p.get("下り・車種判別不能交通量"),
           "flags": flags_of(p),
       }
 
@@ -209,6 +213,8 @@ def main():
           "up_l": getp(p, f"上り・大型交通量{suffix}"),
           "down_s": getp(p, f"下り・小型交通量{suffix}"),
           "down_l": getp(p, f"下り・大型交通量{suffix}"),
+          "up_u": getp(p, f"上り・小型大型判別不能交通量{suffix}"),
+          "down_u": getp(p, f"下り・小型大型判別不能交通量{suffix}"),
           "flags": flags_of(p),
       }
 
