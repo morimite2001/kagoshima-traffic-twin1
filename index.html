@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>鹿児島市 3D交通量統合モニター (様式1〜4対応)</title>
+  <title>鹿児島市周辺 3D交通量モニター（国土交通省 交通量API・参考値）</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" />
@@ -10,7 +10,8 @@
 
   <style>
     * { box-sizing: border-box; }
-    body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; height: 100vh; overflow: hidden; background: #111827; }
+    body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: #111827; }
+    #app { flex: 1; min-height: 0; display: flex; position: relative; }
     
     /* PC表示用レイアウト（横並び） */
     #sidebar {
@@ -32,7 +33,9 @@
     }
     .sidebar-header h2 { margin: 0 0 6px 0; font-size: 15px; color: #60a5fa; }
     
-    .status-text { margin: 6px 0 0 0; font-size: 11px; color: #10b981; }
+    .status-text { margin: 6px 0 0 0; font-size: 11px; line-height: 1.6; color: #10b981; }
+    .status-text.warn { color: #f59e0b; }
+    .status-text .sub { color: #9ca3af; }
     
     .ranking-list {
       flex: 1;
@@ -85,6 +88,20 @@
     .popup-table th, .popup-table td { border: 1px solid #d1d5db; padding: 4px 6px; text-align: center; }
     .popup-table th { background: #f3f4f6; color: #374151; }
 
+    /* 出典・免責表示（常に画面下部に表示。交通量API利用規約 第5条・第8条） */
+    #attribution {
+      flex: none;
+      background: #0b1220;
+      color: #9ca3af;
+      font-size: 10.5px;
+      line-height: 1.5;
+      padding: 6px 12px;
+      border-top: 1px solid #374151;
+      z-index: 20;
+    }
+    #attribution strong { color: #d1d5db; }
+    #attribution a { color: #93c5fd; }
+
     /* モバイル専用切り替えボタン（初期は非表示） */
     #mobile-toggle-bar {
       display: none;
@@ -102,7 +119,8 @@
        スマートフォン向けスタイル (画面幅 768px 以下)
        ============================================================ */
     @media screen and (max-width: 768px) {
-      body { flex-direction: column-reverse; }
+      #app { flex-direction: column-reverse; }
+      #attribution { font-size: 9.5px; padding: 5px 10px; }
 
       #map {
         width: 100%;
@@ -114,7 +132,7 @@
         width: 100%;
         height: auto;
         max-height: 48vh; /* 画面下半分に収める */
-        position: fixed;
+        position: absolute;
         bottom: 0;
         left: 0;
         right: 0;
@@ -159,13 +177,14 @@
 </head>
 <body>
 
+<div id="app">
 <div id="sidebar">
   <div id="mobile-toggle-bar" onclick="toggleSidebar()">
     <span id="toggle-icon">▼</span> 交通量ランキング一覧（タップで開閉）
   </div>
   <div class="sidebar-header">
-    <h2>鹿児島市 交通量統合モニター (全15地点)</h2>
-    <p class="status-text" id="status-label">● 待機中</p>
+    <h2>鹿児島市周辺 交通量モニター</h2>
+    <p class="status-text" id="status-label">● 読み込み中…</p>
   </div>
   <div class="ranking-list" id="ranking-container"></div>
 </div>
@@ -174,8 +193,16 @@
   <div class="legend">
     <div class="legend-item"><div class="legend-color" style="background: #3b82f6;"></div> 上り</div>
     <div class="legend-item"><div class="legend-color" style="background: #ef4444;"></div> 下り</div>
+    <div class="legend-item"><div class="legend-color" style="background: #6b7280;"></div> データなし</div>
   </div>
 </div>
+</div><!-- /#app -->
+
+<footer id="attribution">
+  <div><strong>出典:</strong> 国土交通省 API 機能による交通量(参考値)を加工して作成</div>
+  <div>このサービスは、交通量 API 機能を使用していますが、サービスの内容は国土交通省によって保証されたものではありません。表示値は気象状況・機器状況等により不正確となる場合がある参考値で、国土交通省による正式な交通量の調査結果ではありません。本サービスに関する一切の責任は運営者が負います。
+    データ提供元: <a href="https://www.jartic-open-traffic.org/" target="_blank" rel="noopener">交通量データの提供（オープンデータ）</a></div>
+</footer>
 
 <script>
   const map = new maplibregl.Map({
@@ -218,16 +245,18 @@
 
     if (currentPopup) currentPopup.remove();
 
+    // 値が空(null)の場合は「欠測」、そもそも該当する様式の地点でない場合は「-」
     function fmt5m(f) {
       if (!f) return '<td>-</td><td>-</td><td>-</td><td>-</td>';
-      return `<td>${f.up_s ?? '-'}</td><td>${f.up_l ?? '-'}</td><td>${f.down_s ?? '-'}</td><td>${f.down_l ?? '-'}</td>`;
+      const v = (x) => x ?? '欠測';
+      return `<td>${v(f.up_s)}</td><td>${v(f.up_l)}</td><td>${v(f.down_s)}</td><td>${v(f.down_l)}</td>`;
     }
 
     function fmt1h(f) {
       if (!f) return '<td>-</td><td>-</td><td>-</td><td>-</td>';
-      const us = f.up_s ?? (f.up_tot != null ? `${f.up_tot}(全)` : '-');
-      const ds = f.down_s ?? (f.down_tot != null ? `${f.down_tot}(全)` : '-');
-      return `<td>${us}</td><td>${f.up_l ?? '-'}</td><td>${ds}</td><td>${f.down_l ?? '-'}</td>`;
+      const us = f.up_s ?? (f.up_tot != null ? `${f.up_tot}(全)` : '欠測');
+      const ds = f.down_s ?? (f.down_tot != null ? `${f.down_tot}(全)` : '欠測');
+      return `<td>${us}</td><td>${f.up_l ?? '欠測'}</td><td>${ds}</td><td>${f.down_l ?? '欠測'}</td>`;
     }
 
     const popupHtml = `
@@ -258,6 +287,48 @@
       .addTo(map);
   }
 
+  // 欠測(null)を 0台 と混同しないための補助関数
+  function numOrNull(x) { return (typeof x === 'number') ? x : null; }
+
+  // 1つの様式の方向別合計。全項目が空なら null を返す
+  function dirTotal(f, dir) {
+    if (!f) return null;
+    const tot = numOrNull(f[dir + '_tot']);
+    if (tot !== null) return tot;
+    const s = numOrNull(f[dir + '_s']);
+    const l = numOrNull(f[dir + '_l']);
+    if (s === null && l === null) return null;
+    return (s || 0) + (l || 0);
+  }
+
+  // 表示に使う値を選ぶ: 1時間値(様式4→2)を優先し、無ければ5分値(様式3→1)×12で換算
+  function pickBasis(st) {
+    const order = [['f4', 1, '1時間値'], ['f2', 1, '1時間値'], ['f3', 12, '5分値×12換算'], ['f1', 12, '5分値×12換算']];
+    for (const [key, mult, label] of order) {
+      const u = dirTotal(st[key], 'up');
+      const d = dirTotal(st[key], 'down');
+      if (u !== null || d !== null) {
+        return { up: u === null ? null : u * mult, down: d === null ? null : d * mult, label, converted: mult !== 1 };
+      }
+    }
+    return null; // 全様式で値が空 = データなし
+  }
+
+  // 時間コード(JST, YYYYMMDDhhmm)を表示用に整形
+  function parseTc(tc) {
+    const y = tc.slice(0, 4), mo = tc.slice(4, 6), d = tc.slice(6, 8), h = tc.slice(8, 10), mi = tc.slice(10, 12);
+    return { y, mo, d, h, mi, date: new Date(`${y}-${mo}-${d}T${h}:${mi}:00+09:00`) };
+  }
+  function fmtTc5m(tc) {
+    const t = parseTc(tc);
+    const end = String(Number(t.mi) + 4).padStart(2, '0');
+    return `${t.y}/${t.mo}/${t.d} ${t.h}:${t.mi}〜${t.h}:${end}`;
+  }
+  function fmtTc1h(tc) {
+    const t = parseTc(tc);
+    return `${t.y}/${t.mo}/${t.d} ${t.h}:00〜${t.h}:59`;
+  }
+
   function createPillarPolygon(centerLng, centerLat, radiusMeters, heightMeters, direction, meta) {
     const coords = [];
     const steps = 14;
@@ -278,6 +349,7 @@
       "properties": {
         "direction": direction,
         "height": Math.max(heightMeters, 15),
+        "nodata": !!meta.nodata,
         "code": meta.code
       }
     };
@@ -289,38 +361,47 @@
       const res = await fetch('./traffic_data.json');
       const data = await res.json();
       allStations = data;
-      statusLabel.innerText = `● 全 ${data.length} 地点のデータ表示中`;
+
+      // データ時刻・遅延の明示（観測から約20分後に提供される参考値）
+      const first = data.find(s => s.time_5m && s.time_1h);
+      let statusHtml = `● ${data.length} 地点を表示（交通量APIの参考値）`;
+      let warn = false;
+      if (first) {
+        statusHtml += `<br><span class="sub">データ時刻(JST): 5分値 ${fmtTc5m(first.time_5m)} ／ 1時間値 ${fmtTc1h(first.time_1h)}</span>`;
+        const ageMin = (Date.now() - parseTc(first.time_5m).date.getTime()) / 60000;
+        if (ageMin > 90) {
+          warn = true;
+          statusHtml += '<br>⚠ データが90分以上前のものです。更新が止まっている可能性があります。';
+        }
+      }
+      statusHtml += '<br><span class="sub">観測から約20分遅れで提供されるデータです。概ね30分ごとに自動更新しています。</span>';
+      statusLabel.innerHTML = statusHtml;
+      if (warn) statusLabel.classList.add('warn');
 
       const pillarFeatures = [];
 
       data.forEach(st => {
-        let upVal = 0;
-        let downVal = 0;
+        const basis = pickBasis(st);
+        const nodata = basis === null;
+        const upVal = nodata ? 0 : (basis.up || 0);
+        const downVal = nodata ? 0 : (basis.down || 0);
 
-        if (st.f4) {
-          upVal = (st.f4.up_tot || (st.f4.up_s + st.f4.up_l)) || 0;
-          downVal = (st.f4.down_tot || (st.f4.down_s + st.f4.down_l)) || 0;
-        } else if (st.f2) {
-          upVal = (st.f2.up_s + st.f2.up_l) || 0;
-          downVal = (st.f2.down_s + st.f2.down_l) || 0;
-        } else if (st.f1) {
-          upVal = ((st.f1.up_s + st.f1.up_l) || 0) * 12;
-          downVal = ((st.f1.down_s + st.f1.down_l) || 0) * 12;
-        }
-
+        st.nodata = nodata;
+        st.basisLabel = nodata ? null : basis.label;
+        st.upRaw = nodata ? null : basis.up;       // null = 欠測
+        st.downRaw = nodata ? null : basis.down;   // null = 欠測
         st.totalDisplay = upVal + downVal;
-        st.upDisplay = upVal;
-        st.downDisplay = downVal;
 
         pillarFeatures.push(createPillarPolygon(
-          st.lng - 0.00022, st.lat, 16, upVal * 0.35, '上り', { code: st.code }
+          st.lng - 0.00022, st.lat, 16, upVal * 0.35, '上り', { code: st.code, nodata }
         ));
         pillarFeatures.push(createPillarPolygon(
-          st.lng + 0.00022, st.lat, 16, downVal * 0.35, '下り', { code: st.code }
+          st.lng + 0.00022, st.lat, 16, downVal * 0.35, '下り', { code: st.code, nodata }
         ));
       });
 
-      data.sort((a, b) => b.totalDisplay - a.totalDisplay);
+      // データあり → 交通量の多い順、データなしは末尾
+      data.sort((a, b) => (a.nodata - b.nodata) || (b.totalDisplay - a.totalDisplay));
 
       const listContainer = document.getElementById('ranking-container');
       listContainer.innerHTML = '';
@@ -328,13 +409,20 @@
       data.forEach((st, idx) => {
         const item = document.createElement('div');
         item.className = 'ranking-item';
+        const fmtDir = (v) => (v === null ? '欠測' : v);
+        const sub = st.nodata
+          ? 'データなし（欠測または未提供）'
+          : `上り:${fmtDir(st.upRaw)} / 下り:${fmtDir(st.downRaw)} <span style="color:#6b7280;">(${st.basisLabel})</span>`;
+        const val = st.nodata
+          ? '<span class="traffic-unit">データなし</span>'
+          : `${st.totalDisplay} <span class="traffic-unit">台/時</span>`;
         item.innerHTML = `
-          <div class="rank-num">${idx + 1}</div>
+          <div class="rank-num">${st.nodata ? '-' : idx + 1}</div>
           <div class="station-info">
             <div class="station-name">地点: ${st.code} (${st.type})</div>
-            <div class="station-sub">上り:${st.upDisplay} / 下り:${st.downDisplay}</div>
+            <div class="station-sub">${sub}</div>
           </div>
-          <div class="traffic-val">${st.totalDisplay} <span class="traffic-unit">台/時</span></div>
+          <div class="traffic-val">${val}</div>
         `;
         item.onclick = () => flyToStation(st);
         listContainer.appendChild(item);
@@ -358,8 +446,8 @@
           'paint': {
             'fill-extrusion-color': [
               'match', ['get', 'direction'],
-              '上り', '#3b82f6',
-              '下り', '#ef4444',
+              '上り', ['case', ['get', 'nodata'], '#6b7280', '#3b82f6'],
+              '下り', ['case', ['get', 'nodata'], '#6b7280', '#ef4444'],
               '#fbbf24'
             ],
             'fill-extrusion-height': ['get', 'height'],
