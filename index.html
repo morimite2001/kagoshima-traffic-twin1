@@ -259,6 +259,8 @@
       return `<td>${us}</td><td>${f.up_l ?? '欠測'}</td><td>${ds}</td><td>${f.down_l ?? '欠測'}</td>`;
     }
 
+    const reasons = stationReasons(st);
+
     const popupHtml = `
       <div style="font-size:12px; min-width: 260px; color:#111;">
         <h4 style="margin:0 0 2px 0; color:#1e40af; font-size:14px;">観測点: ${st.code}</h4>
@@ -278,13 +280,67 @@
           <tr><td>様式3 (CCTV 5分)</td>${fmt5m(st.f3)}</tr>
           <tr><td>様式4 (CCTV 1時間)</td>${fmt1h(st.f4)}</tr>
         </table>
+        ${reasons.length ? `<div style="margin-top:6px; color:#b45309; font-size:11px;">⚠ 観測側の異常フラグ: ${reasons.join('、')}（取得時点のフラグ）</div>` : ''}
       </div>
     `;
 
-    currentPopup = new maplibregl.Popup({ offset: 20 })
+    currentPopup = new maplibregl.Popup({ offset: 20, maxWidth: '340px' })
       .setLngLat([st.lng, st.lat])
       .setHTML(popupHtml)
       .addTo(map);
+  }
+
+  // ---- 観測側の異常フラグ（traffic_data.json の flags）を読む補助関数 ----
+  // 項目名の全角/半角の違いを吸収して比較する
+  const nz = (str) => String(str).normalize('NFKC').replace(/\s/g, '');
+
+  function flagIsOn(flags, name) {
+    if (!flags) return false;
+    const target = nz(name);
+    for (const k of Object.keys(flags)) {
+      if (nz(k) === target) return String(flags[k]) === '1';
+    }
+    return false;
+  }
+
+  // CCTV(様式3の5分値)で「1:異常」のときに理由として表示するフラグ
+  const CCTV_FLAG_LABELS = [
+    ['カメラプリセット位置', 'カメラ位置異常'],
+    ['気象影響による映像不良', '気象による映像不良'],
+    ['照度不足', '照度不足'],
+    ['サーバの稼働', 'サーバ異常'],
+    ['カメラの映像受信', 'カメラ映像の受信異常'],
+    ['映像のデコード処理', '映像デコード異常'],
+    ['デコード映像から映像解析機能への取込加工処理の失敗', '映像取込処理の失敗'],
+    ['映像解析機能のフリーズ', '映像解析のフリーズ'],
+    ['その他エラー', 'その他エラー'],
+  ];
+  // 常設トラカン(様式1・2)の異常フラグ
+  const FIXED_FLAG_LABELS = [
+    ['停電', '停電'], ['ループ異常', 'ループ異常'], ['超音波異常', '超音波異常'], ['欠測', '欠測フラグ'],
+  ];
+
+  // 異常フラグが立っている項目の一覧（フラグが無い古いJSONでは空配列）
+  function stationReasons(st) {
+    const out = [];
+    if (st.type === 'CCTVトラカン') {
+      const fl = st.f3 && st.f3.flags;
+      CCTV_FLAG_LABELS.forEach(([key, label]) => { if (flagIsOn(fl, key)) out.push(label); });
+    } else {
+      ['f1', 'f2'].forEach((fk) => {
+        const fl = st[fk] && st[fk].flags;
+        ['上り', '下り'].forEach((dir) => {
+          FIXED_FLAG_LABELS.forEach(([key, label]) => {
+            if (flagIsOn(fl, `${dir}・${key}`)) out.push(`${dir}・${label}`);
+          });
+        });
+      });
+    }
+    return [...new Set(out)];
+  }
+
+  function hasFlags(st) {
+    return !!((st.f1 && st.f1.flags) || (st.f2 && st.f2.flags) || (st.f3 && st.f3.flags));
   }
 
   // 欠測(null)を 0台 と混同しないための補助関数
@@ -362,17 +418,24 @@
       const data = await res.json();
       allStations = data;
 
-      // データ時刻・遅延の明示（観測から約20分後に提供される参考値）
+      // 最終更新時刻(generated_at)・データ時刻・遅延の明示
+      const gen = data.find(s => s.generated_at);
       const first = data.find(s => s.time_5m && s.time_1h);
       let statusHtml = `● ${data.length} 地点を表示（交通量APIの参考値）`;
       let warn = false;
+      let ageMin = null;
+      if (gen) {
+        const g = String(gen.generated_at).replace(' JST', '');
+        statusHtml += `<br><span class="sub">最終更新(JST): ${g.slice(0, 16).replace(/-/g, '/')}</span>`;
+        ageMin = (Date.now() - new Date(g.replace(' ', 'T') + '+09:00').getTime()) / 60000;
+      }
       if (first) {
         statusHtml += `<br><span class="sub">データ時刻(JST): 5分値 ${fmtTc5m(first.time_5m)} ／ 1時間値 ${fmtTc1h(first.time_1h)}</span>`;
-        const ageMin = (Date.now() - parseTc(first.time_5m).date.getTime()) / 60000;
-        if (ageMin > 90) {
-          warn = true;
-          statusHtml += '<br>⚠ データが90分以上前のものです。更新が止まっている可能性があります。';
-        }
+        if (ageMin === null) ageMin = (Date.now() - parseTc(first.time_5m).date.getTime()) / 60000;
+      }
+      if (ageMin !== null && ageMin > 90) {
+        warn = true;
+        statusHtml += '<br>⚠ 最終更新から90分以上経っています。更新が止まっている可能性があります。';
       }
       statusHtml += '<br><span class="sub">観測から約20分遅れで提供されるデータです。概ね30分ごとに自動更新しています。</span>';
       statusLabel.innerHTML = statusHtml;
@@ -410,8 +473,13 @@
         const item = document.createElement('div');
         item.className = 'ranking-item';
         const fmtDir = (v) => (v === null ? '欠測' : v);
+        const noDataText = (x) => {
+          const r = stationReasons(x);
+          if (r.length) return `データなし（${r.join('・')}）`;
+          return hasFlags(x) ? 'データなし（異常フラグなし。欠測または未提供）' : 'データなし（欠測または未提供）';
+        };
         const sub = st.nodata
-          ? 'データなし（欠測または未提供）'
+          ? noDataText(st)
           : `上り:${fmtDir(st.upRaw)} / 下り:${fmtDir(st.downRaw)} <span style="color:#6b7280;">(${st.basisLabel})</span>`;
         const val = st.nodata
           ? '<span class="traffic-unit">データなし</span>'
