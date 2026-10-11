@@ -246,17 +246,19 @@
     if (currentPopup) currentPopup.remove();
 
     // 値が空(null)の場合は「欠測」、そもそも該当する様式の地点でない場合は「-」
+    // 車種判別不能(up_u/down_u)は古い形式のJSONには無いので、その場合は「-」
+    const vu = (x) => (x === undefined ? '-' : (x ?? '欠測'));
     function fmt5m(f) {
-      if (!f) return '<td>-</td><td>-</td><td>-</td><td>-</td>';
+      if (!f) return '<td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>';
       const v = (x) => x ?? '欠測';
-      return `<td>${v(f.up_s)}</td><td>${v(f.up_l)}</td><td>${v(f.down_s)}</td><td>${v(f.down_l)}</td>`;
+      return `<td>${v(f.up_s)}</td><td>${v(f.up_l)}</td><td>${vu(f.up_u)}</td><td>${v(f.down_s)}</td><td>${v(f.down_l)}</td><td>${vu(f.down_u)}</td>`;
     }
 
     function fmt1h(f) {
-      if (!f) return '<td>-</td><td>-</td><td>-</td><td>-</td>';
+      if (!f) return '<td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>';
       const us = f.up_s ?? (f.up_tot != null ? `${f.up_tot}(全)` : '欠測');
       const ds = f.down_s ?? (f.down_tot != null ? `${f.down_tot}(全)` : '欠測');
-      return `<td>${us}</td><td>${f.up_l ?? '欠測'}</td><td>${ds}</td><td>${f.down_l ?? '欠測'}</td>`;
+      return `<td>${us}</td><td>${f.up_l ?? '欠測'}</td><td>${vu(f.up_u)}</td><td>${ds}</td><td>${f.down_l ?? '欠測'}</td><td>${vu(f.down_u)}</td>`;
     }
 
     const reasons = stationReasons(st);
@@ -269,22 +271,23 @@
         <table class="popup-table">
           <tr>
             <th rowspan="2">様式</th>
-            <th colspan="2" style="color:#2563eb;">上り</th>
-            <th colspan="2" style="color:#dc2626;">下り</th>
+            <th colspan="3" style="color:#2563eb;">上り</th>
+            <th colspan="3" style="color:#dc2626;">下り</th>
           </tr>
           <tr>
-            <th>小型</th><th>大型</th><th>小型</th><th>大型</th>
+            <th>小型</th><th>大型</th><th title="車種判別不能">不明</th><th>小型</th><th>大型</th><th title="車種判別不能">不明</th>
           </tr>
           <tr><td>様式1 (常設5分)</td>${fmt5m(st.f1)}</tr>
           <tr><td>様式2 (常設1時間)</td>${fmt1h(st.f2)}</tr>
           <tr><td>様式3 (CCTV 5分)</td>${fmt5m(st.f3)}</tr>
           <tr><td>様式4 (CCTV 1時間)</td>${fmt1h(st.f4)}</tr>
         </table>
+        <div style="margin-top:4px; color:#6b7280; font-size:10px;">不明＝小型・大型に判別できなかった台数（合計には含めています）</div>
         ${reasons.length ? `<div style="margin-top:6px; color:#b45309; font-size:11px;">⚠ 観測側の異常フラグ: ${reasons.join('、')}（取得時点のフラグ）</div>` : ''}
       </div>
     `;
 
-    currentPopup = new maplibregl.Popup({ offset: 20, maxWidth: '340px' })
+    currentPopup = new maplibregl.Popup({ offset: 20, maxWidth: '420px' })
       .setLngLat([st.lng, st.lat])
       .setHTML(popupHtml)
       .addTo(map);
@@ -353,8 +356,9 @@
     if (tot !== null) return tot;
     const s = numOrNull(f[dir + '_s']);
     const l = numOrNull(f[dir + '_l']);
-    if (s === null && l === null) return null;
-    return (s || 0) + (l || 0);
+    const u = numOrNull(f[dir + '_u']);   // 車種判別不能（古いJSONには無い）
+    if (s === null && l === null && u === null) return null;
+    return (s || 0) + (l || 0) + (u || 0);
   }
 
   // 表示に使う値を選ぶ: 1時間値(様式4→2)を優先し、無ければ5分値(様式3→1)×12で換算
