@@ -70,7 +70,7 @@
     .legend {
       position: absolute;
       top: 14px;
-      right: 14px;
+      right: 56px; /* 右上のズームボタンと重ならない位置 */
       background: rgba(17, 24, 39, 0.9);
       color: #fff;
       padding: 8px 12px;
@@ -193,7 +193,7 @@
   <div class="legend">
     <div class="legend-item"><div class="legend-color" style="background: #3b82f6;"></div> 上り</div>
     <div class="legend-item"><div class="legend-color" style="background: #ef4444;"></div> 下り</div>
-    <div class="legend-item"><div class="legend-color" style="background: #6b7280;"></div> データなし</div>
+    <div class="legend-item"><div class="legend-color" style="background: #6b7280;"></div> データなし・欠測</div>
   </div>
 </div>
 </div><!-- /#app -->
@@ -456,10 +456,10 @@
         st.totalDisplay = upVal + downVal;
 
         pillarFeatures.push(createPillarPolygon(
-          st.lng - 0.00022, st.lat, 16, upVal * 0.35, '上り', { code: st.code, nodata }
+          st.lng - 0.00022, st.lat, 16, upVal * 0.35, '上り', { code: st.code, nodata: nodata || st.upRaw === null }
         ));
         pillarFeatures.push(createPillarPolygon(
-          st.lng + 0.00022, st.lat, 16, downVal * 0.35, '下り', { code: st.code, nodata }
+          st.lng + 0.00022, st.lat, 16, downVal * 0.35, '下り', { code: st.code, nodata: nodata || st.downRaw === null }
         ));
       });
 
