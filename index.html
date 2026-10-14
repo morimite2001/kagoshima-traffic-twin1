@@ -86,7 +86,13 @@
 
     /* ポップアップが画面からはみ出さないよう、高さを制限してスクロールさせる */
     .popup-body { max-height: 58vh; overflow-y: auto; }
-    @media (max-width: 768px) { .popup-body { max-height: 40vh; } }
+    @media (max-width: 768px) {
+      .popup-body { max-height: 40vh; }
+      /* スマホでは、地図上の位置に合わせず、画面上部に幅いっぱいで表示する（左端や下部で切れないように） */
+      .maplibregl-popup { position: fixed !important; top: 8px !important; left: 8px !important; right: 8px !important; transform: none !important; max-width: none !important; }
+      .maplibregl-popup-tip { display: none !important; }
+      .maplibregl-popup-content { width: 100%; box-sizing: border-box; }
+    }
     .popup-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 6px; }
     .popup-table th, .popup-table td { border: 1px solid #d1d5db; padding: 4px 6px; text-align: center; }
     .popup-table th { background: #f3f4f6; color: #374151; }
@@ -238,8 +244,8 @@
       pitch: 65,
       bearing: -15,
       speed: 1.2,
-      // PCでは地点を画面の少し下に寄せ、上側にポップアップの表示スペースを確保する
-      offset: window.innerWidth > 768 ? [0, Math.round(window.innerHeight * 0.2)] : [0, 0]
+      // 地点を画面の少し下に寄せ、上側にポップアップの表示スペースを確保する
+      offset: [0, Math.round(window.innerHeight * 0.2)]
     });
 
     // スマホ時は地点を選択したら邪魔にならないよう自動で下部パネルを閉じる
@@ -325,15 +331,27 @@
     return 10 * pow;
   }
 
-  function trendText(total) {
+  // 1方向ぶんの傾向を判定する（約1時間前の3点平均と、直近の3点平均を比べる）
+  function trendOf(vals) {
     const avg = (xs) => { const a = xs.filter((v) => v !== null); return a.length >= 2 ? a.reduce((x, y) => x + y, 0) / a.length : null; };
-    const first = avg(total.slice(0, 3));
-    const last = avg(total.slice(SLOT_COUNT - 3));
-    if (first === null || last === null) return '傾向: 判定に必要なデータが足りません';
+    const first = avg(vals.slice(0, 3));
+    const last = avg(vals.slice(SLOT_COUNT - 3));
+    if (first === null || last === null) return null;
     const diff = last - first;
     let label = '横ばい';
-    if (Math.abs(diff) >= 5 && Math.abs(diff) / Math.max(first, 1) >= 0.1) label = diff > 0 ? '増加傾向' : '減少傾向';
-    return `傾向（上り+下りの合計）: <b>${label}</b>（約1時間前 ${Math.round(first)} → 直近 ${Math.round(last)} 台/5分）`;
+    if (Math.abs(diff) >= 3 && Math.abs(diff) / Math.max(first, 1) >= 0.1) label = diff > 0 ? '増加傾向' : '減少傾向';
+    return { label, first: Math.round(first), last: Math.round(last) };
+  }
+
+  // 上り・下りそれぞれの傾向を2行で表示する
+  function trendLines(up, down) {
+    const line = (name, color, vals) => {
+      const t = trendOf(vals);
+      const head = `<span style="color:${color};">■</span> ${name}: `;
+      if (!t) return `${head}判定に必要なデータが足りません`;
+      return `${head}<b>${t.label}</b>（約1時間前 ${t.first} → 直近 ${t.last} 台/5分）`;
+    };
+    return `${line('上り', COLOR_UP, up)}<br>${line('下り', COLOR_DOWN, down)}`;
   }
 
   function buildSeriesChart(st) {
@@ -386,7 +404,7 @@
       <div style="color:#b45309; font-size:10px; margin-top:2px;">※ 約20〜50分遅れ・渋滞の度合いを示すものではありません</div>
       <div style="font-size:10px; margin-top:2px;">${legend}</div>
       ${svg}
-      <div style="font-size:11px; color:#374151; margin-top:2px;">${trendText(total)}</div>
+      <div style="font-size:11px; color:#374151; margin-top:2px; line-height:1.7;">${trendLines(up, down)}</div>
       <div style="margin-top:4px; color:#b45309; font-size:10px; line-height:1.5;">※ 観測から約20〜50分遅れの交通量です。<b>渋滞の度合いを示すものではありません</b>（混雑時は台数が減ることもあります）。実線は3点移動平均、薄い線と点は実測値です。</div>`;
   }
 
