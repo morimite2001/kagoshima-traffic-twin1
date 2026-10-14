@@ -60,9 +60,14 @@ def flags_of(p):
   return {k: v for k, v in p.items() if norm(k) not in NON_FLAG_KEYS}
 
 
-def fetch(layer, time_code):
+def fetch(layer, time_code, time_to=None):
+  """time_to を指定すると、time_code〜time_to の範囲（5分刻み）をまとめて取得する"""
+  if time_to:
+    cond = f"時間コード>={time_code} AND 時間コード<={time_to}"
+  else:
+    cond = f"時間コード={time_code}"
   cql = (
-      f"道路種別=3 AND 時間コード={time_code} AND"
+      f"道路種別=3 AND {cond} AND"
       f" BBOX(ジオメトリ,{BBOX},'EPSG:4326')"
   )
   params = {
@@ -154,6 +159,73 @@ def save_history(station_list):
   print(f"履歴: {len(rows)} 行を {path} に追記しました。")
 
 
+# ---- 過去1時間の5分間交通量（グラフ用: traffic_series.json）----
+SERIES_WINDOW_MIN = 60
+
+
+def series_point(p, kind):
+  """1件のレコードから、時刻と上り・下りの合計台数(5分間)を取り出す。空なら None"""
+  if kind == "fixed":
+    d = {
+        "up_s": p.get("上り・小型交通量"), "up_l": p.get("上り・大型交通量"),
+        "up_u": p.get("上り・車種判別不能交通量"),
+        "down_s": p.get("下り・小型交通量"), "down_l": p.get("下り・大型交通量"),
+        "down_u": p.get("下り・車種判別不能交通量"),
+    }
+  else:
+    suffix = "（集計値）"
+    d = {
+        "up_tot": getp(p, f"上り・自動車交通量{suffix}"),
+        "down_tot": getp(p, f"下り・自動車交通量{suffix}"),
+        "up_s": getp(p, f"上り・小型交通量{suffix}"),
+        "up_l": getp(p, f"上り・大型交通量{suffix}"),
+        "up_u": getp(p, f"上り・小型大型判別不能交通量{suffix}"),
+        "down_s": getp(p, f"下り・小型交通量{suffix}"),
+        "down_l": getp(p, f"下り・大型交通量{suffix}"),
+        "down_u": getp(p, f"下り・小型大型判別不能交通量{suffix}"),
+    }
+  up, down = dir_total(d, "up"), dir_total(d, "down")
+  return {
+      "t": str(p.get("時間コード")),
+      "up": None if up == "" else up,
+      "down": None if down == "" else down,
+  }
+
+
+def build_series(generated_at):
+  """直近1時間分(13点)の5分値を、様式1(常設)と様式3(CCTV)から範囲指定でまとめて取得する"""
+  t5f = t5.replace(minute=(t5.minute // 5) * 5, second=0, microsecond=0)
+  start = t5f - datetime.timedelta(minutes=SERIES_WINDOW_MIN)
+  code_start = start.strftime("%Y%m%d%H%M")
+  sources = (
+      ("fixed", "常設トラカン", fetch("t_travospublic_measure_5m", code_start, code_5m)),
+      ("cctv", "CCTVトラカン", fetch("t_travospublic_measure_5m_img", code_start, code_5m)),
+  )
+  stations = {}
+  for kind, type_name, feats in sources:
+    for f in feats:
+      p = f.get("properties", {})
+      if p.get("時間コード") is None or p.get("常時観測点コード") is None:
+        continue
+      st = stations.setdefault(
+          str(p["常時観測点コード"]), {"type": type_name, "points": {}})
+      pt = series_point(p, kind)
+      st["points"][pt["t"]] = pt
+  out = {}
+  for code, st in stations.items():
+    out[code] = {
+        "type": st["type"],
+        "points": [st["points"][k] for k in sorted(st["points"])],
+    }
+  return {
+      "generated_at": generated_at,
+      "latest": code_5m,
+      "interval_min": 5,
+      "window_min": SERIES_WINDOW_MIN,
+      "stations": out,
+  }
+
+
 def main():
   print(f"JARTIC API リクエスト開始: 5分={code_5m} / 1時間={code_1h}")
   f1 = fetch("t_travospublic_measure_5m", code_5m)
@@ -228,6 +300,16 @@ def main():
     save_history(list(stations.values()))
   except Exception as e:
     print(f"履歴の保存に失敗しました: {e}")
+
+  # グラフ用の過去1時間データ。失敗しても、上の更新には影響させない
+  try:
+    series = build_series(generated_at)
+    with open("traffic_series.json", "w", encoding="utf-8") as out:
+      json.dump(series, out, ensure_ascii=False, separators=(",", ":"))
+    n_pts = sum(len(v["points"]) for v in series["stations"].values())
+    print(f"グラフ用データ: {len(series['stations'])} 地点・{n_pts} 点を保存しました。")
+  except Exception as e:
+    print(f"グラフ用データの保存に失敗しました: {e}")
 
 
 if __name__ == "__main__":
