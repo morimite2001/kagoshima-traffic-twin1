@@ -217,6 +217,7 @@
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
   let currentPopup = null;
+  let seriesData = null; // traffic_series.json（過去1時間の5分間交通量）
   let allStations = [];
 
   // スマホ用の開閉トグル関数
@@ -283,6 +284,7 @@
           <tr><td>様式4 (CCTV 1時間)</td>${fmt1h(st.f4)}</tr>
         </table>
         <div style="margin-top:4px; color:#6b7280; font-size:10px;">不明＝小型・大型に判別できなかった台数（合計には含めています）</div>
+        ${buildSeriesChart(st)}
         ${reasons.length ? `<div style="margin-top:6px; color:#b45309; font-size:11px;">⚠ 観測側の異常フラグ: ${reasons.join('、')}（取得時点のフラグ）</div>` : ''}
       </div>
     `;
@@ -291,6 +293,95 @@
       .setLngLat([st.lng, st.lat])
       .setHTML(popupHtml)
       .addTo(map);
+  }
+
+  // ---- 過去1時間の5分間交通量グラフ（traffic_series.json）----
+  const SLOT_COUNT = 13; // 5分刻みで60分 = 13点
+  const COLOR_UP = '#3b82f6';
+  const COLOR_DOWN = '#ef4444';
+
+  function jstCodeFromMs(ms) {
+    const j = new Date(ms + 9 * 3600000);
+    const p2 = (n) => String(n).padStart(2, '0');
+    return `${j.getUTCFullYear()}${p2(j.getUTCMonth() + 1)}${p2(j.getUTCDate())}${p2(j.getUTCHours())}${p2(j.getUTCMinutes())}`;
+  }
+
+  // 3点移動平均（null は無視。窓内がすべて null なら null）
+  function movingAvg(arr) {
+    return arr.map((_, i) => {
+      const w = arr.slice(Math.max(0, i - 1), i + 2).filter((v) => v !== null);
+      return w.length ? w.reduce((a, b) => a + b, 0) / w.length : null;
+    });
+  }
+
+  function niceMax(v) {
+    const pow = Math.pow(10, Math.floor(Math.log10(Math.max(v, 1))));
+    for (const m of [1, 2, 5, 10]) { if (m * pow >= v) return m * pow; }
+    return 10 * pow;
+  }
+
+  function trendText(total) {
+    const avg = (xs) => { const a = xs.filter((v) => v !== null); return a.length >= 2 ? a.reduce((x, y) => x + y, 0) / a.length : null; };
+    const first = avg(total.slice(0, 3));
+    const last = avg(total.slice(SLOT_COUNT - 3));
+    if (first === null || last === null) return '傾向: 判定に必要なデータが足りません';
+    const diff = last - first;
+    let label = '横ばい';
+    if (Math.abs(diff) >= 5 && Math.abs(diff) / Math.max(first, 1) >= 0.1) label = diff > 0 ? '増加傾向' : '減少傾向';
+    return `傾向（上り+下りの合計）: <b>${label}</b>（約1時間前 ${Math.round(first)} → 直近 ${Math.round(last)} 台/5分）`;
+  }
+
+  function buildSeriesChart(st) {
+    const head = '<div style="margin-top:8px; font-weight:600; font-size:11px; color:#374151;">過去1時間の5分間交通量</div>';
+    const msg = (t) => `${head}<div style="color:#6b7280; font-size:11px; margin-top:4px;">${t}</div>`;
+    if (!seriesData) return msg('グラフ用データを読み込めませんでした（次回の更新後に表示されます）。');
+    const info = seriesData.stations && seriesData.stations[st.code];
+    if (!info || !seriesData.latest) return msg('この地点のグラフ用データはありません。');
+
+    const baseMs = parseTc(String(seriesData.latest)).date.getTime();
+    const slots = [];
+    for (let k = 0; k < SLOT_COUNT; k++) slots.push(baseMs - (SLOT_COUNT - 1 - k) * 300000);
+    const byT = {};
+    (info.points || []).forEach((p) => { byT[p.t] = p; });
+    const pick = (key) => slots.map((ms) => { const p = byT[jstCodeFromMs(ms)]; return p && typeof p[key] === 'number' ? p[key] : null; });
+    const up = pick('up');
+    const down = pick('down');
+    const total = up.map((u, i) => (u === null && down[i] === null ? null : (u || 0) + (down[i] || 0)));
+    if (total.every((v) => v === null)) return msg('グラフにできるデータがありません（欠測またはデータなし）。');
+
+    const W = 360, H = 150, L = 34, R = 8, T = 10, B = 26;
+    const plotW = W - L - R, plotH = H - T - B;
+    const maxV = niceMax(Math.max(1, ...up.concat(down).filter((v) => v !== null)));
+    const x = (i) => L + plotW * i / (SLOT_COUNT - 1);
+    const y = (v) => T + plotH * (1 - v / maxV);
+    const path = (vals) => {
+      let d = '', pen = false;
+      vals.forEach((v, i) => {
+        if (v === null) { pen = false; return; }
+        d += `${pen ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)} `;
+        pen = true;
+      });
+      return d;
+    };
+    const dots = (vals, color) => vals.map((v, i) => (v === null ? '' : `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="1.8" fill="${color}" fill-opacity="0.55"/>`)).join('');
+    const grid = [0, maxV / 2, maxV].map((v) => `<line x1="${L}" y1="${y(v).toFixed(1)}" x2="${W - R}" y2="${y(v).toFixed(1)}" stroke="#e5e7eb"/><text x="${L - 4}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#6b7280">${Math.round(v)}</text>`).join('');
+    const hhmm = (ms) => { const c = jstCodeFromMs(ms); return `${c.slice(8, 10)}:${c.slice(10, 12)}`; };
+    const xl = [[0, 'start'], [6, 'middle'], [12, 'end']].map(([i, a]) => `<text x="${x(i).toFixed(1)}" y="${H - 8}" text-anchor="${a}" font-size="9" fill="#6b7280">${hhmm(slots[i])}</text>`).join('');
+    const svg = `
+      <svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto; display:block; margin-top:4px;" role="img" aria-label="過去1時間の5分間交通量の折れ線グラフ">
+        ${grid}${xl}
+        <path d="${path(up)}" fill="none" stroke="${COLOR_UP}" stroke-opacity="0.35" stroke-width="1"/>
+        <path d="${path(down)}" fill="none" stroke="${COLOR_DOWN}" stroke-opacity="0.35" stroke-width="1"/>
+        ${dots(up, COLOR_UP)}${dots(down, COLOR_DOWN)}
+        <path d="${path(movingAvg(up))}" fill="none" stroke="${COLOR_UP}" stroke-width="2"/>
+        <path d="${path(movingAvg(down))}" fill="none" stroke="${COLOR_DOWN}" stroke-width="2"/>
+      </svg>`;
+    const legend = `<span style="color:${COLOR_UP};">■</span> 上り　<span style="color:${COLOR_DOWN};">■</span> 下り　<span style="color:#6b7280;">単位: 台/5分（時刻は日本時間）</span>`;
+    return `${head}
+      <div style="font-size:10px; margin-top:2px;">${legend}</div>
+      ${svg}
+      <div style="font-size:11px; color:#374151; margin-top:2px;">${trendText(total)}</div>
+      <div style="margin-top:4px; color:#b45309; font-size:10px; line-height:1.5;">※ 観測から約20〜50分遅れの交通量です。<b>渋滞の度合いを示すものではありません</b>（混雑時は台数が減ることもあります）。実線は3点移動平均、薄い線と点は実測値です。</div>`;
   }
 
   // ---- 観測側の異常フラグ（traffic_data.json の flags）を読む補助関数 ----
@@ -421,6 +512,12 @@
       const res = await fetch('./traffic_data.json');
       const data = await res.json();
       allStations = data;
+
+      // グラフ用データ（失敗してもサイト本体の表示には影響させない）
+      fetch('./traffic_series.json', { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => { seriesData = j; })
+        .catch(() => {});
 
       // 最終更新時刻(generated_at)・データ時刻・遅延の明示
       const gen = data.find(s => s.generated_at);
