@@ -84,6 +84,9 @@
     .legend-item { display: flex; align-items: center; gap: 5px; }
     .legend-color { width: 10px; height: 10px; border-radius: 2px; }
 
+    /* ポップアップが画面からはみ出さないよう、高さを制限してスクロールさせる */
+    .popup-body { max-height: 58vh; overflow-y: auto; }
+    @media (max-width: 768px) { .popup-body { max-height: 40vh; } }
     .popup-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 6px; }
     .popup-table th, .popup-table td { border: 1px solid #d1d5db; padding: 4px 6px; text-align: center; }
     .popup-table th { background: #f3f4f6; color: #374151; }
@@ -234,7 +237,9 @@
       zoom: 16.2,
       pitch: 65,
       bearing: -15,
-      speed: 1.2
+      speed: 1.2,
+      // PCでは地点を画面の少し下に寄せ、上側にポップアップの表示スペースを確保する
+      offset: window.innerWidth > 768 ? [0, Math.round(window.innerHeight * 0.2)] : [0, 0]
     });
 
     // スマホ時は地点を選択したら邪魔にならないよう自動で下部パネルを閉じる
@@ -265,7 +270,7 @@
     const reasons = stationReasons(st);
 
     const popupHtml = `
-      <div style="font-size:12px; min-width: 260px; color:#111;">
+      <div class="popup-body" style="font-size:12px; min-width: 260px; color:#111;">
         <h4 style="margin:0 0 2px 0; color:#1e40af; font-size:14px;">観測点: ${st.code}</h4>
         <div style="color:#666; font-size:11px; margin-bottom:6px;">種別: ${st.type}</div>
         
@@ -378,6 +383,7 @@
       </svg>`;
     const legend = `<span style="color:${COLOR_UP};">■</span> 上り　<span style="color:${COLOR_DOWN};">■</span> 下り　<span style="color:#6b7280;">単位: 台/5分（時刻は日本時間）</span>`;
     return `${head}
+      <div style="color:#b45309; font-size:10px; margin-top:2px;">※ 約20〜50分遅れ・渋滞の度合いを示すものではありません</div>
       <div style="font-size:10px; margin-top:2px;">${legend}</div>
       ${svg}
       <div style="font-size:11px; color:#374151; margin-top:2px;">${trendText(total)}</div>
