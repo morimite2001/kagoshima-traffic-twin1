@@ -1,7 +1,9 @@
 import csv
 import datetime
+import glob
 import json
 import os
+import time
 import unicodedata
 import urllib.parse
 import urllib.request
@@ -60,7 +62,7 @@ def flags_of(p):
   return {k: v for k, v in p.items() if norm(k) not in NON_FLAG_KEYS}
 
 
-def fetch(layer, time_code, time_to=None):
+def fetch(layer, time_code, time_to=None, raise_on_error=False):
   """time_to を指定すると、time_code〜time_to の範囲（5分刻み）をまとめて取得する"""
   if time_to:
     cond = f"時間コード>={time_code} AND 時間コード<={time_to}"
@@ -86,10 +88,16 @@ def fetch(layer, time_code, time_to=None):
   )
   req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
   try:
-    with urllib.request.urlopen(req, timeout=15) as r:
-      return json.loads(r.read().decode("utf-8")).get("features", [])
+    with urllib.request.urlopen(req, timeout=30) as r:
+      data = json.loads(r.read().decode("utf-8"))
+    if raise_on_error and "features" not in data:
+      # 取得量が大きすぎる場合などは、features の無いエラー応答になる
+      raise RuntimeError(f"想定外の応答: {str(data)[:200]}")
+    return data.get("features", [])
   except Exception as e:
     print(f"[{layer}] エラー: {e}")
+    if raise_on_error:
+      raise
     return []
 
 
@@ -163,7 +171,7 @@ def save_history(station_list):
 SERIES_WINDOW_MIN = 60
 
 
-def series_point(p, kind):
+def series_point(p, kind, suffix="（集計値）"):
   """1件のレコードから、時刻と上り・下りの合計台数(5分間)を取り出す。空なら None"""
   if kind == "fixed":
     d = {
@@ -173,7 +181,6 @@ def series_point(p, kind):
         "down_u": p.get("下り・車種判別不能交通量"),
     }
   else:
-    suffix = "（集計値）"
     d = {
         "up_tot": getp(p, f"上り・自動車交通量{suffix}"),
         "down_tot": getp(p, f"下り・自動車交通量{suffix}"),
@@ -224,6 +231,142 @@ def build_series(generated_at):
       "window_min": SERIES_WINDOW_MIN,
       "stations": out,
   }
+
+
+# ---- 1時間値の履歴（欠けた時刻を自動で埋める: history/hourly_YYYYMM.csv）----
+# 実行が飛ばされて記録が欠けても、APIが保持している1時間値（約3か月分）から取り直して埋める。
+HOURLY_COLUMNS = ["time_1h", "code", "type", "up", "down", "abnormal", "fetched_at"]
+HOURLY_RECENT_HOURS = 3      # 毎回取り直す直近の時間数（速報値が後で更新されることがあるため）
+HOURLY_BACKFILL_DAYS = 30    # 何日前まで遡って欠けを埋めるか
+HOURLY_CHUNK_HOURS = 24      # 1回のリクエストで取得する最大の時間数
+HOURLY_MAX_CHUNKS = 6        # 1回の実行で処理する欠けの塊の最大数（初回の穴埋めは数回に分けて進む）
+HOURLY_SETTLE_HOURS = 3      # この時間を過ぎても返ってこない時刻は「データなし」とみなして再取得しない
+HOURLY_TRIED_FILE = os.path.join(HISTORY_DIR, "hourly_tried.txt")
+
+
+def hour_code(dt):
+  return dt.strftime("%Y%m%d%H") + "00"
+
+
+def parse_hour(code):
+  return datetime.datetime.strptime(code, "%Y%m%d%H%M")
+
+
+def load_hourly():
+  """history/hourly_*.csv をすべて読み込む。{(time_1h, code): 行} を返す"""
+  data = {}
+  for path in sorted(glob.glob(os.path.join(HISTORY_DIR, "hourly_20*.csv"))):
+    with open(path, encoding="utf-8-sig", newline="") as fh:
+      for r in csv.DictReader(fh):
+        data[(r["time_1h"], r["code"])] = r
+  return data
+
+
+def save_hourly_months(data, months):
+  """変更のあった月のファイルだけを、時刻・地点コード順に書き直す"""
+  for month in sorted(months):
+    keys = sorted(k for k in data if k[0][:6] == month)
+    path = os.path.join(HISTORY_DIR, f"hourly_{month}.csv")
+    with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+      w = csv.writer(fh)
+      w.writerow(HOURLY_COLUMNS)
+      for k in keys:
+        r = data[k]
+        w.writerow([r[c] for c in HOURLY_COLUMNS])
+
+
+def fetch_hourly(code_from, code_to, fetched_at):
+  """常設(様式2)とCCTV(様式4)の1時間値を、範囲指定でまとめて取得する。失敗時は例外"""
+  out = []
+  for kind, type_name, layer in (
+      ("fixed", "常設トラカン", "t_travospublic_measure_1h"),
+      ("cctv", "CCTVトラカン", "t_travospublic_measure_1h_img"),
+  ):
+    for f in fetch(layer, code_from, code_to, raise_on_error=True):
+      p = f.get("properties", {})
+      if p.get("時間コード") is None or p.get("常時観測点コード") is None:
+        continue
+      pt = series_point(p, kind, suffix="")
+      abnormal = "|".join(k for k, v in flags_of(p).items() if str(v) == "1")
+      out.append({
+          "time_1h": pt["t"],
+          "code": str(p["常時観測点コード"]),
+          "type": type_name,
+          "up": "" if pt["up"] is None else pt["up"],
+          "down": "" if pt["down"] is None else pt["down"],
+          "abnormal": abnormal,
+          "fetched_at": fetched_at,
+      })
+    time.sleep(1)  # APIへの負荷を抑える
+  return out
+
+
+def update_hourly(generated_at):
+  os.makedirs(HISTORY_DIR, exist_ok=True)
+  data = load_hourly()
+  tried = set()
+  if os.path.exists(HOURLY_TRIED_FILE):
+    with open(HOURLY_TRIED_FILE, encoding="utf-8") as fh:
+      tried = {line.strip() for line in fh if line.strip()}
+  dirty_months = set()
+  latest_h = parse_hour(code_1h)
+
+  def upsert(rows):
+    for r in rows:
+      data[(r["time_1h"], r["code"])] = r
+      dirty_months.add(r["time_1h"][:6])
+
+  # 1) 直近の数時間は毎回取り直して上書きする（1時間集計の速報値が後で更新されることがあるため）
+  recent_from = latest_h - datetime.timedelta(hours=HOURLY_RECENT_HOURS - 1)
+  rows = fetch_hourly(hour_code(recent_from), code_1h, generated_at)
+  upsert(rows)
+  print(f"1時間値(直近): {len(rows)} 件を更新しました。")
+
+  # 2) それより前で、記録が1件も無い時刻を探し、新しい方から順に取り直して埋める
+  present = {t for (t, _c) in data}
+  start_h = latest_h - datetime.timedelta(days=HOURLY_BACKFILL_DAYS)
+  boundary = recent_from - datetime.timedelta(hours=1)
+  missing = []
+  h = start_h
+  while h <= boundary:
+    c = hour_code(h)
+    if c not in present and c not in tried:
+      missing.append(h)
+    h += datetime.timedelta(hours=1)
+  print(f"1時間値: 記録の欠けている時刻は {len(missing)} 時間分です。")
+
+  filled = 0
+  newly_tried = set()
+  chunks = 0
+  missing.sort(reverse=True)
+  while missing and chunks < HOURLY_MAX_CHUNKS:
+    newest = missing[0]
+    window_start = newest - datetime.timedelta(hours=HOURLY_CHUNK_HOURS - 1)
+    window = [m for m in missing if window_start <= m <= newest]
+    code_from, code_to = hour_code(min(window)), hour_code(newest)
+    chunks += 1
+    try:
+      rows = fetch_hourly(code_from, code_to, generated_at)
+    except Exception as e:
+      print(f"1時間値の穴埋めに失敗しました({code_from}〜{code_to}): {e}")
+      break  # 失敗した時は、ここで中断して次回に回す（「取得済み」とは記録しない）
+    upsert(rows)
+    got_hours = {r["time_1h"] for r in rows}
+    filled += len(rows)
+    for m in window:
+      c = hour_code(m)
+      if c not in got_hours and m < latest_h - datetime.timedelta(hours=HOURLY_SETTLE_HOURS):
+        newly_tried.add(c)  # 取りに行ったが返ってこなかった時刻。次回以降は再取得しない
+    missing = [m for m in missing if m not in set(window)]
+  if chunks:
+    print(f"1時間値(穴埋め): {chunks} 回のリクエストで {filled} 件を追加しました。残り {len(missing)} 時間分。")
+
+  if dirty_months:
+    save_hourly_months(data, dirty_months)
+  if newly_tried:
+    with open(HOURLY_TRIED_FILE, "a", encoding="utf-8") as fh:
+      for c in sorted(newly_tried):
+        fh.write(c + "\n")
 
 
 def main():
@@ -310,6 +453,12 @@ def main():
     print(f"グラフ用データ: {len(series['stations'])} 地点・{n_pts} 点を保存しました。")
   except Exception as e:
     print(f"グラフ用データの保存に失敗しました: {e}")
+
+  # 1時間値の履歴（欠けた時刻の穴埋め）。失敗しても、上の更新には影響させない
+  try:
+    update_hourly(generated_at)
+  except Exception as e:
+    print(f"1時間値の履歴の更新に失敗しました: {e}")
 
 
 if __name__ == "__main__":
