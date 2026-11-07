@@ -5,8 +5,15 @@
   <title>鹿児島市周辺 3D交通量モニター（国土交通省 交通量API・参考値）</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   
-  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css"
+        onerror="this.onerror=null; this.href='https://cdn.jsdelivr.net/npm/maplibre-gl@3.6.2/dist/maplibre-gl.css'" />
   <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+  <script>
+    // unpkg から読み込めなかったときの予備（jsDelivr から同じバージョンを読み込む）
+    if (typeof maplibregl === 'undefined') {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@3.6.2/dist/maplibre-gl.js"><\/script>');
+    }
+  </script>
 
   <style>
     * { box-sizing: border-box; }
@@ -36,6 +43,12 @@
     .status-text { margin: 6px 0 0 0; font-size: 11px; line-height: 1.6; color: #10b981; }
     .status-text.warn { color: #f59e0b; }
     .status-text .sub { color: #9ca3af; }
+    .exp-panel { margin-top: 8px; font-size: 11px; line-height: 1.6; color: #d1d5db; background: #0f172a; border: 1px solid #374151; border-radius: 6px; padding: 6px 8px; }
+    .exp-panel summary { cursor: pointer; color: #93c5fd; font-weight: 600; }
+    .exp-panel table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 11px; }
+    .exp-panel th, .exp-panel td { border-bottom: 1px solid #1f2937; padding: 2px 4px; text-align: right; }
+    .exp-panel th:first-child, .exp-panel td:first-child { text-align: left; }
+    .exp-panel .note { color: #9ca3af; font-size: 10px; margin-top: 4px; }
     
     .ranking-list {
       flex: 1;
@@ -194,6 +207,10 @@
   <div class="sidebar-header">
     <h2>鹿児島市周辺 交通量モニター</h2>
     <p class="status-text" id="status-label">● 読み込み中…</p>
+    <details class="exp-panel" id="exp-panel">
+      <summary>時差出勤の社会実験（11/9〜20）：朝ピークの実験前比</summary>
+      <div id="exp-body">読み込み中…</div>
+    </details>
   </div>
   <div class="ranking-list" id="ranking-container"></div>
 </div>
@@ -214,6 +231,11 @@
 </footer>
 
 <script>
+  // 地図ライブラリが、どちらの配信元からも読み込めなかったときは、原因が分かる表示を出して止める
+  if (typeof maplibregl === 'undefined') {
+    document.getElementById('status-label').innerText = '⚠ 地図ライブラリを読み込めませんでした。通信状況を確認して、ページを再読み込みしてください。';
+    throw new Error('maplibregl is not defined（地図ライブラリの読み込みに失敗）');
+  }
   const map = new maplibregl.Map({
     container: 'map',
     style: 'https://tile.openstreetmap.jp/styles/osm-bright-ja/style.json',
@@ -227,6 +249,8 @@
 
   let currentPopup = null;
   let seriesData = null; // traffic_series.json（過去1時間の5分間交通量）
+  let baselineData = null; // traffic_baseline.json（比較の基準。実験前の平日・休日の、時間帯ごとの中央値）
+  let experimentData = null; // traffic_experiment.json（朝ピーク7:30〜8:30の、実験前との比較）
   let allStations = [];
 
   // スマホ用の開閉トグル関数
@@ -296,6 +320,7 @@
         </table>
         <div style="margin-top:4px; color:#6b7280; font-size:10px;">不明＝小型・大型に判別できなかった台数（合計には含めています）</div>
         ${buildSeriesChart(st)}
+        ${buildExperimentBlock(st)}
         ${reasons.length ? `<div style="margin-top:6px; color:#b45309; font-size:11px;">⚠ 観測側の異常フラグ: ${reasons.join('、')}（取得時点のフラグ）</div>` : ''}
       </div>
     `;
@@ -304,6 +329,72 @@
       .setLngLat([st.lng, st.lat])
       .setHTML(popupHtml)
       .addTo(map);
+  }
+
+  // ---- 時差出勤の社会実験: 朝ピーク(7:30〜8:30)の、実験前との比較（traffic_experiment.json）----
+  const WD = ['日', '月', '火', '水', '木', '金', '土'];
+  function fmtDay(dstr) {
+    const d = new Date(Date.UTC(+dstr.slice(0, 4), +dstr.slice(4, 6) - 1, +dstr.slice(6, 8)));
+    return `${+dstr.slice(4, 6)}/${+dstr.slice(6, 8)}(${WD[d.getUTCDay()]})`;
+  }
+  function fmtPct(v) { return v === null || v === undefined ? '欠測' : `${v >= 0 ? '+' : ''}${Math.round(v)}%`; }
+  const phaseTag = (ph) => (ph === 'exp' ? '' : '<span style="color:#9ca3af;">（実験前）</span>');
+
+  // 表示する日: 実験期間の日（新しい順）と、実験前の直近3平日
+  function pickDays(dayKeys, phaseOf) {
+    const sorted = dayKeys.slice().sort().reverse();
+    const exp = sorted.filter((k) => phaseOf(k) === 'exp');
+    const pre = sorted.filter((k) => phaseOf(k) === 'pre').slice(0, 3);
+    const post = sorted.filter((k) => phaseOf(k) === 'post');
+    return post.concat(exp, pre);
+  }
+
+  function renderExperimentPanel() {
+    const body = document.getElementById('exp-body');
+    if (!body) return;
+    if (!experimentData) { body.innerHTML = '比較データは、まだありません（次回の更新後に表示されます）。'; return; }
+    const e = experimentData;
+    const days = pickDays(Object.keys(e.daily), (k) => e.daily[k].phase);
+    const hasExp = days.some((k) => e.daily[k].phase === 'exp');
+    const rows = days.map((k) => {
+      const d = e.daily[k];
+      const med = d.median_pct === null ? '—' : fmtPct(d.median_pct);
+      return `<tr><td>${fmtDay(k)}${phaseTag(d.phase)}</td><td>${d.n}</td><td><b>${med}</b></td><td>${d.achieved}/${d.n}</td></tr>`;
+    }).join('');
+    body.innerHTML = `
+      <div>朝ピーク（${e.peak_text}）の台数を、<b>${e.baseline.text}</b>の中央値と比べています。目標は ${e.target_pct}%（朝ピーク交通量の1割削減）です。</div>
+      ${hasExp ? '' : '<div class="note">実験は 11/9 から始まります。下の表は、実験前の最近の平日の様子で、日ごとのばらつきの目安になります。</div>'}
+      <table>
+        <tr><th>日付</th><th>地点数</th><th>中央値の増減</th><th>目標達成</th></tr>
+        ${rows || '<tr><td colspan="4">表示できる日がありません</td></tr>'}
+      </table>
+      <div class="note">地点数＝まとめの対象地点（実験前の日ごとのばらつきが小さい地点のみ）。中央値の増減＝それらの地点の、実験前比の中央値。目標達成＝${e.target_pct}%以下の地点数。
+      天候・行事・工事などの影響も含まれます。国土交通省の観測値（参考値）から算出したもので、実験の公式な評価ではありません。</div>`;
+  }
+
+  function buildExperimentBlock(st) {
+    const head = (t) => `<div style="margin-top:10px; font-weight:600; font-size:11px; color:#374151;">${t}</div>`;
+    if (!experimentData) return '';
+    const e = experimentData;
+    const info = e.stations && e.stations[st.code];
+    const title = head(`朝ピーク（${e.peak_text}）の実験前比`);
+    if (!info || !info.base) return `${title}<div style="color:#6b7280; font-size:11px; margin-top:4px;">実験前の基準を作るための、欠けのない日数が足りないため、比較できません。</div>`;
+    const b = info.base;
+    const days = pickDays(Object.keys(info.days), (k) => info.days[k].phase).slice(0, 8);
+    const cell = (v) => (v === null || v === undefined ? '欠測' : v);
+    const rows = days.map((k) => {
+      const d = info.days[k];
+      const ok = typeof d.pct === 'number' && d.pct <= e.target_pct ? ' ✔' : '';
+      return `<tr><td style="text-align:left;">${fmtDay(k)}${phaseTag(d.phase)}</td><td>${cell(d.up)}</td><td>${cell(d.down)}</td><td>${cell(d.total)}</td><td><b>${fmtPct(d.pct)}</b>${ok}</td></tr>`;
+    }).join('');
+    return `${title}
+      <div style="font-size:10px; color:#374151; margin-top:2px; line-height:1.5;">${e.baseline.text}の中央値: 上り ${Math.round(b.up)} / 下り ${Math.round(b.down)} / 合計 <b>${Math.round(b.total)}</b> 台（${b.n}日分、範囲 ${b.min}〜${b.max}）。
+      ${b.reliable ? '' : '<br><span style="color:#b45309;">※ 実験前の日ごとのばらつきが大きい地点です（全体のまとめの対象外）。</span>'}</div>
+      <table class="popup-table" style="margin-top:4px;">
+        <tr><th style="text-align:left;">日付</th><th>上り</th><th>下り</th><th>合計</th><th>実験前比</th></tr>
+        ${rows}
+      </table>
+      <div style="margin-top:2px; color:#6b7280; font-size:10px;">台数は ${e.peak_text} の1時間分。✔ は目標（${e.target_pct}%以下）。欠測＝カメラ異常などで1枠でも値が欠けた日。</div>`;
   }
 
   // ---- 過去1時間の5分間交通量グラフ（traffic_series.json）----
@@ -343,15 +434,66 @@
     return { label, first: Math.round(first), last: Math.round(last) };
   }
 
+  // ---- 「ふだん」の線（traffic_baseline.json）----
+  // 平日／休日の判定: 土日・祝日・年末年始（12/29〜1/3）は休日扱い（祝日の一覧は traffic_baseline.json に入っている）
+  function isRestDayMs(ms, holidays) {
+    const j = new Date(ms + 9 * 3600000);
+    const y = j.getUTCFullYear(), m = j.getUTCMonth() + 1, d = j.getUTCDate(), dow = j.getUTCDay();
+    const key = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    return dow === 0 || dow === 6 || holidays.includes(key) || (m === 12 && d >= 29) || (m === 1 && d <= 3);
+  }
+
+  // 各5分枠の「ふだん」の値（台/5分）。1時間の中央値を12で割り、時間帯の中心どうしを直線でつなぐ。データが無ければ null
+  function baselineForSlots(code, slots) {
+    const st = baselineData && baselineData.stations && baselineData.stations[code];
+    if (!st) return null;
+    const holidays = baselineData.holidays || [];
+    const result = { up: [], down: [] };
+    let any = false;
+    ['up', 'down'].forEach((dir) => {
+      slots.forEach((ms) => {
+        const table = st[isRestDayMs(ms, holidays) ? 'holiday' : 'weekday'] || {};
+        const j = new Date(ms + 9 * 3600000);
+        const pos = j.getUTCHours() + j.getUTCMinutes() / 60 + 2.5 / 60; // その5分枠の中心（時）
+        const hv = (h) => { const e = table[String(h)]; return e && typeof e[dir] === 'number' ? e[dir] : null; };
+        const h0 = Math.floor(pos - 0.5);            // 手前の時間帯（その時間の中心は h0+0.5）
+        const frac = pos - (h0 + 0.5);
+        const v0 = hv(Math.max(0, Math.min(23, h0)));
+        const v1 = hv(Math.max(0, Math.min(23, h0 + 1)));
+        let v = null;
+        if (v0 !== null && v1 !== null) v = v0 + (v1 - v0) * frac;
+        else v = v0 !== null ? v0 : v1;
+        if (v !== null) { result[dir].push(v / 12); any = true; } else { result[dir].push(null); }
+      });
+    });
+    return any ? result : null;
+  }
+
+  // 直近3点が「ふだん」と比べてどうか
+  function compareText(vals, baseVals) {
+    if (!baseVals) return '';
+    const last = (arr) => arr.slice(SLOT_COUNT - 3);
+    const pairs = last(vals).map((v, i) => [v, last(baseVals)[i]]).filter(([v, b]) => v !== null && b !== null);
+    if (pairs.length < 2) return '';
+    const a = pairs.reduce((x, [v]) => x + v, 0) / pairs.length;
+    const b = pairs.reduce((x, [, bb]) => x + bb, 0) / pairs.length;
+    const diff = a - b;
+    const pct = Math.round(diff / Math.max(b, 1) * 100);
+    const BL = (baselineData && baselineData.label) || 'ふだん';
+    let label = `${BL}並み`;
+    if (Math.abs(diff) >= 3 && Math.abs(diff) / Math.max(b, 1) >= 0.15) label = diff > 0 ? `${BL}より多め` : `${BL}より少なめ`;
+    return `／ ${BL}比: <b>${label}</b>（${pct >= 0 ? '+' : ''}${pct}%）`;
+  }
+
   // 上り・下りそれぞれの傾向を2行で表示する
-  function trendLines(up, down) {
-    const line = (name, color, vals) => {
+  function trendLines(up, down, base) {
+    const line = (name, color, vals, baseVals) => {
       const t = trendOf(vals);
       const head = `<span style="color:${color};">■</span> ${name}: `;
       if (!t) return `${head}判定に必要なデータが足りません`;
-      return `${head}<b>${t.label}</b>（約1時間前 ${t.first} → 直近 ${t.last} 台/5分）`;
+      return `${head}<b>${t.label}</b>（約1時間前 ${t.first} → 直近 ${t.last} 台/5分）${compareText(vals, baseVals)}`;
     };
-    return `${line('上り', COLOR_UP, up)}<br>${line('下り', COLOR_DOWN, down)}`;
+    return `${line('上り', COLOR_UP, up, base && base.up)}<br>${line('下り', COLOR_DOWN, down, base && base.down)}`;
   }
 
   function buildSeriesChart(st) {
@@ -369,12 +511,14 @@
     const pick = (key) => slots.map((ms) => { const p = byT[jstCodeFromMs(ms)]; return p && typeof p[key] === 'number' ? p[key] : null; });
     const up = pick('up');
     const down = pick('down');
+    const base = baselineForSlots(st.code, slots);
     const total = up.map((u, i) => (u === null && down[i] === null ? null : (u || 0) + (down[i] || 0)));
     if (total.every((v) => v === null)) return msg('グラフにできるデータがありません（欠測またはデータなし）。');
 
     const W = 360, H = 150, L = 34, R = 8, T = 10, B = 26;
     const plotW = W - L - R, plotH = H - T - B;
-    const maxV = niceMax(Math.max(1, ...up.concat(down).filter((v) => v !== null)));
+    const baseAll = base ? base.up.concat(base.down) : [];
+    const maxV = niceMax(Math.max(1, ...up.concat(down, baseAll).filter((v) => v !== null)));
     const x = (i) => L + plotW * i / (SLOT_COUNT - 1);
     const y = (v) => T + plotH * (1 - v / maxV);
     const path = (vals) => {
@@ -393,19 +537,20 @@
     const svg = `
       <svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto; display:block; margin-top:4px;" role="img" aria-label="過去1時間の5分間交通量の折れ線グラフ">
         ${grid}${xl}
+        ${base ? `<path d="${path(base.up)}" fill="none" stroke="${COLOR_UP}" stroke-width="1.5" stroke-dasharray="4 3" stroke-opacity="0.8"/><path d="${path(base.down)}" fill="none" stroke="${COLOR_DOWN}" stroke-width="1.5" stroke-dasharray="4 3" stroke-opacity="0.8"/>` : ''}
         <path d="${path(up)}" fill="none" stroke="${COLOR_UP}" stroke-opacity="0.35" stroke-width="1"/>
         <path d="${path(down)}" fill="none" stroke="${COLOR_DOWN}" stroke-opacity="0.35" stroke-width="1"/>
         ${dots(up, COLOR_UP)}${dots(down, COLOR_DOWN)}
         <path d="${path(movingAvg(up))}" fill="none" stroke="${COLOR_UP}" stroke-width="2"/>
         <path d="${path(movingAvg(down))}" fill="none" stroke="${COLOR_DOWN}" stroke-width="2"/>
       </svg>`;
-    const legend = `<span style="color:${COLOR_UP};">■</span> 上り　<span style="color:${COLOR_DOWN};">■</span> 下り　<span style="color:#6b7280;">単位: 台/5分（時刻は日本時間）</span>`;
+    const legend = `<span style="color:${COLOR_UP};">■</span> 上り　<span style="color:${COLOR_DOWN};">■</span> 下り　<span style="color:#6b7280;">${base ? `破線＝${(baselineData && baselineData.label) || 'ふだん'}　` : ''}単位: 台/5分（時刻は日本時間）</span>`;
     return `${head}
       <div style="color:#b45309; font-size:10px; margin-top:2px;">※ 約20〜50分遅れ・渋滞の度合いを示すものではありません</div>
       <div style="font-size:10px; margin-top:2px;">${legend}</div>
       ${svg}
-      <div style="font-size:11px; color:#374151; margin-top:2px; line-height:1.7;">${trendLines(up, down)}</div>
-      <div style="margin-top:4px; color:#b45309; font-size:10px; line-height:1.5;">※ 観測から約20〜50分遅れの交通量です。<b>渋滞の度合いを示すものではありません</b>（混雑時は台数が減ることもあります）。実線は3点移動平均、薄い線と点は実測値です。</div>`;
+      <div style="font-size:11px; color:#374151; margin-top:2px; line-height:1.7;">${trendLines(up, down, base)}</div>
+      <div style="margin-top:4px; color:#b45309; font-size:10px; line-height:1.5;">※ 観測から約20〜50分遅れの交通量です。<b>渋滞の度合いを示すものではありません</b>（混雑時は台数が減ることもあります）。実線は3点移動平均、薄い線と点は実測値です。${base ? (baselineData.mode === 'fixed' ? `破線の「${baselineData.label}」は、${baselineData.period_text}の、同じ区分（平日／休日）・同じ時間帯の中央値です。` : '破線の「ふだん」は、過去4週間の、同じ区分（平日／休日）・同じ時間帯の中央値です。') : ''}</div>`;
   }
 
   // ---- 観測側の異常フラグ（traffic_data.json の flags）を読む補助関数 ----
@@ -542,6 +687,14 @@
         .then((r) => (r.ok ? r.json() : null))
         .then((j) => { seriesData = j; })
         .catch(() => {});
+      fetch('./traffic_baseline.json', { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => { baselineData = j; })
+        .catch(() => {});
+      fetch('./traffic_experiment.json', { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => { experimentData = j; renderExperimentPanel(); })
+        .catch(() => { renderExperimentPanel(); });
 
       // 最終更新時刻(generated_at)・データ時刻・遅延の明示
       const gen = data.find(s => s.generated_at);
