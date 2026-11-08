@@ -12,6 +12,9 @@ import urllib.request
 # 南端を 31.293 → 31.285 に広げ、南端ぎりぎりにある地点(9811950)を含める
 BBOX = "130.386,31.285,130.730,31.753"
 
+# 朝のピーク時間帯に10分ごとに更新するとき(FAST_MODE=1)は、時間のかかる処理(履歴の追記・1時間値の穴埋め・基準の作成)を省く
+FAST_MODE = os.environ.get("FAST_MODE") == "1"
+
 # 日本時間 (UTC+9) の現在時刻を取得
 now_utc = datetime.datetime.now(datetime.timezone.utc)
 now_jst = now_utc + datetime.timedelta(hours=9)
@@ -708,7 +711,7 @@ def update_experiment(generated_at):
 
 
 def main():
-  print(f"JARTIC API リクエスト開始: 5分={code_5m} / 1時間={code_1h}")
+  print(f"JARTIC API リクエスト開始: 5分={code_5m} / 1時間={code_1h}" + (" [朝ピーク用の高頻度モード]" if FAST_MODE else ""))
   f1 = fetch("t_travospublic_measure_5m", code_5m)
   f2 = fetch("t_travospublic_measure_1h", code_1h)
   f3 = fetch("t_travospublic_measure_5m_img", code_5m)
@@ -777,10 +780,11 @@ def main():
   print(f"更新完了: {len(stations)} 地点を保存しました。")
 
   # 履歴の保存に失敗しても、上の traffic_data.json の更新には影響させない
-  try:
-    save_history(list(stations.values()))
-  except Exception as e:
-    print(f"履歴の保存に失敗しました: {e}")
+  if not FAST_MODE:
+    try:
+      save_history(list(stations.values()))
+    except Exception as e:
+      print(f"履歴の保存に失敗しました: {e}")
 
   # グラフ用の過去1時間データ。失敗しても、上の更新には影響させない
   try:
@@ -793,16 +797,18 @@ def main():
     print(f"グラフ用データの保存に失敗しました: {e}")
 
   # 1時間値の履歴（欠けた時刻の穴埋め）。失敗しても、上の更新には影響させない
-  try:
-    update_hourly(generated_at)
-  except Exception as e:
-    print(f"1時間値の履歴の更新に失敗しました: {e}")
+  if not FAST_MODE:
+    try:
+      update_hourly(generated_at)
+    except Exception as e:
+      print(f"1時間値の履歴の更新に失敗しました: {e}")
 
   # 「ふだん」の交通量（グラフの比較線用）。失敗しても、上の更新には影響させない
-  try:
-    update_baseline(generated_at)
-  except Exception as e:
-    print(f"ふだんの交通量の作成に失敗しました: {e}")
+  if not FAST_MODE:
+    try:
+      update_baseline(generated_at)
+    except Exception as e:
+      print(f"ふだんの交通量の作成に失敗しました: {e}")
 
   # 朝の5分値の保存と、実験前との比較。失敗しても、上の更新には影響させない
   try:
