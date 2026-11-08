@@ -1,0 +1,74 @@
+name: Morning Peak Update
+
+on:
+  schedule:
+    # 実験期間の平日の朝に開始する（日本時間の 7:00 / 7:20 / 7:40。UTCでは前日の22時台で、日曜〜木曜）
+    # GitHubの定期実行は遅れることがあるため、開始時刻を3回に分けています。
+    - cron: '0,20,40 22 * * 0-4'
+  workflow_dispatch:
+
+# 通常の更新(update.yml)と同時に動いて、データの保存が衝突しないよう、順番に実行する
+concurrency:
+  group: traffic-data
+  cancel-in-progress: false
+
+jobs:
+  morning-peak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: write
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python環境のセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 朝のピーク時間帯に10分ごとに更新する
+        env:
+          FAST_MODE: '1'
+          TZ: Asia/Tokyo
+        run: |
+          # 実験期間(11/9〜11/20)の平日以外は、何もしない（手動実行のときは、この確認を飛ばす）
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            today=$(date +%Y%m%d)
+            dow=$(date +%u)
+            if [ "$today" -lt 20261109 ] || [ "$today" -gt 20261120 ] || [ "$dow" -gt 5 ]; then
+              echo "実験期間の平日ではないため、何もしません。"
+              exit 0
+            fi
+          fi
+
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+
+          i=0
+          while true; do
+            i=$((i+1))
+            python update_traffic.py || echo "更新に失敗しました（次の回で再試行します）"
+
+            git add -A
+            if ! git diff --staged --quiet; then
+              git commit -m "Auto update traffic data (morning peak) [skip ci]"
+            fi
+
+            # 日本時間の 9:35 を過ぎたら終了する。朝(6:00〜9:35)以外に手動で実行したときは、1回だけ更新して終了する
+            now=$((10#$(date +%H%M)))
+            if [ "$now" -ge 935 ] || [ "$now" -lt 600 ]; then
+              break
+            fi
+
+            # 更新のたびに公開（push）する。10分間隔なので、1時間に6回で、GitHub Pagesのビルド回数の目安を超えない
+            git pull --rebase --autostash || echo "pull に失敗しました"
+            git push || echo "push に失敗しました（次の回で再試行します）"
+
+            # 次の更新まで10分待つ（APIへのアクセスを控えめにするため）
+            sleep 600
+          done
+
+          git pull --rebase --autostash || echo "pull に失敗しました"
+          git push || echo "push に失敗しました"
