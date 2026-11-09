@@ -2,7 +2,7 @@ name: Update Traffic Data
 
 on:
   schedule:
-    # 毎時 15分 と 45分 に自動実行（30分間隔）
+    # 毎時 15分 と 45分 に自動実行（30分間隔）。GitHubの定期実行は、遅れたり飛ばされたりすることがあります
     - cron: '15,45 * * * *'
   workflow_dispatch:
 
@@ -14,6 +14,7 @@ concurrency:
 jobs:
   update-data:
     runs-on: ubuntu-latest
+    timeout-minutes: 200
     permissions:
       contents: write
 
@@ -26,13 +27,50 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: 交通量データ取得スクリプトを実行
-        run: |
-          python update_traffic.py
-
-      - name: 更新があればGitにコミットしてプッシュ
+      - name: 交通量データを取得して保存する
+        env:
+          TZ: Asia/Tokyo
         run: |
           git config --local user.name "github-actions[bot]"
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto update traffic data [skip ci]" && git push)
+
+          # 実験期間(11/9〜11/20)の平日の朝(6:00〜9:35)に始まった実行は、そのまま9:35まで10分ごとに更新する。
+          # 定期実行が遅れても飛ばされても、朝のどこかで1回でも実行が始まれば、そこから連続更新に入る。
+          today=$(date +%Y%m%d)
+          dow=$(date +%u)
+          now=$((10#$(date +%H%M)))
+          loop=0
+          if [ "$today" -ge 20261109 ] && [ "$today" -le 20261120 ] && [ "$dow" -le 5 ] && [ "$now" -ge 600 ] && [ "$now" -lt 935 ]; then
+            loop=1
+            export FAST_MODE=1
+            echo "実験期間の平日の朝なので、9:35まで10分ごとに更新します。"
+          fi
+
+          while true; do
+            python update_traffic.py || echo "更新に失敗しました（次の回で再試行します）"
+
+            git add -A
+            if ! git diff --staged --quiet; then
+              git commit -m "Auto update traffic data [skip ci]"
+            fi
+
+            # 連続更新でなければ、1回で終了する
+            if [ "$loop" != "1" ]; then
+              break
+            fi
+            # 日本時間の 9:35 を過ぎたら終了する
+            now=$((10#$(date +%H%M)))
+            if [ "$now" -ge 935 ]; then
+              break
+            fi
+
+            # 更新のたびに公開（push）する。10分間隔なので、1時間に6回
+            git pull --rebase --autostash || echo "pull に失敗しました"
+            git push || echo "push に失敗しました（次の回で再試行します）"
+
+            # 次の更新まで10分待つ（APIへのアクセスを控えめにするため）
+            sleep 600
+          done
+
+          git pull --rebase --autostash || echo "pull に失敗しました"
+          git push
