@@ -2,11 +2,11 @@ name: Update Traffic Data
 
 on:
   schedule:
-    # 毎時 15分 と 45分 に自動実行（30分間隔）。GitHubの定期実行は、遅れたり飛ばされたりすることがあります
+    # 毎時 15分 と 45分 に自動実行（30分間隔）
     - cron: '15,45 * * * *'
   workflow_dispatch:
 
-# 朝のピーク時間帯の更新(morning-peak.yml)と同時に動いて、データの保存が衝突しないよう、順番に実行する
+# 同時に複数のジョブが走って git push が衝突するのを防ぐ
 concurrency:
   group: traffic-data
   cancel-in-progress: false
@@ -14,7 +14,7 @@ concurrency:
 jobs:
   update-data:
     runs-on: ubuntu-latest
-    timeout-minutes: 200
+    timeout-minutes: 150
     permissions:
       contents: write
 
@@ -34,43 +34,46 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
 
-          # 実験期間(11/9〜11/20)の平日の朝(6:00〜9:35)に始まった実行は、そのまま9:35まで10分ごとに更新する。
-          # 定期実行が遅れても飛ばされても、朝のどこかで1回でも実行が始まれば、そこから連続更新に入る。
           today=$(date +%Y%m%d)
           dow=$(date +%u)
           now=$((10#$(date +%H%M)))
-          loop=0
-          if [ "$today" -ge 20261109 ] && [ "$today" -le 20261120 ] && [ "$dow" -le 5 ] && [ "$now" -ge 600 ] && [ "$now" -lt 935 ]; then
-            loop=1
-            export FAST_MODE=1
-            echo "実験期間の平日の朝なので、9:35まで10分ごとに更新します。"
+
+          # 直近4分以内にすでに更新コミットがある場合は、別ジョブがループ実行中とみなして即終了（キュー詰まり防止）
+          last_commit_sec=$(git log -1 --format=%ct || echo 0)
+          now_sec=$(date +%s)
+          if [ $((now_sec - last_commit_sec)) -lt 240 ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "直近で更新されているためスキップします。"
+            exit 0
           fi
 
-          while true; do
-            python update_traffic.py || echo "更新に失敗しました（次の回で再試行します）"
+          # 実験期間(11/9〜11/20)の平日の朝(7:10〜9:15)は、9:15まで5分(300秒)おきに高頻度更新する
+          # （※APIは25分前の5分値を返すため、実時刻 7:15〜9:15 に取得すると 6:50〜8:50 のデータを網羅できます）
+          if [ "$today" -ge 20261109 ] && [ "$today" -le 20261120 ] && [ "$dow" -le 5 ] && [ "$now" -ge 710 ] && [ "$now" -lt 915 ]; then
+            echo "実験期間の平日の朝ピーク時間帯のため、9:15まで5分ごとに高速更新します。"
+            while true; do
+              FAST_MODE=1 python update_traffic.py || echo "高速更新に失敗しました"
 
-            git add -A
-            if ! git diff --staged --quiet; then
-              git commit -m "Auto update traffic data [skip ci]"
-            fi
+              git add -A
+              if ! git diff --staged --quiet; then
+                git commit -m "Auto update traffic data (morning peak)"
+                git pull --rebase --autostash || true
+                git push || true
+              fi
 
-            # 連続更新でなければ、1回で終了する
-            if [ "$loop" != "1" ]; then
-              break
-            fi
-            # 日本時間の 9:35 を過ぎたら終了する
-            now=$((10#$(date +%H%M)))
-            if [ "$now" -ge 935 ]; then
-              break
-            fi
+              now=$((10#$(date +%H%M)))
+              if [ "$now" -ge 915 ]; then
+                break
+              fi
+              sleep 300
+            done
+          fi
 
-            # 更新のたびに公開（push）する。10分間隔なので、1時間に6回
-            git pull --rebase --autostash || echo "pull に失敗しました"
-            git push || echo "push に失敗しました（次の回で再試行します）"
+          # 通常更新（朝ループが終わった直後の 9:15 すぎにも1回実行し、履歴CSVや実験比較を完全更新する）
+          FAST_MODE=0 python update_traffic.py
 
-            # 次の更新まで10分待つ（APIへのアクセスを控えめにするため）
-            sleep 600
-          done
-
-          git pull --rebase --autostash || echo "pull に失敗しました"
-          git push
+          git add -A
+          if ! git diff --staged --quiet; then
+            git commit -m "Auto update traffic data"
+            git pull --rebase --autostash
+            git push
+          fi
