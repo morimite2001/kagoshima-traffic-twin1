@@ -449,48 +449,60 @@ def build_baseline(generated_at):
       "period_text": f"{mmdd(start)}〜{mmdd(ref)}",
       "unit": "台/時",
       "statistic": "median",
-      "days": BASELINE_DAYS,
-      "min_samples": BASELINE_MIN_SAMPLES,
-      "period": {"from": hour_code(start), "to": hour_code(ref)},
-      "holidays": sorted(JP_HOLIDAYS),
-      "stations": stations,
-  }
+      def sums(slot_map, has_up=True, has_down=True):
+    ups = [slot_map.get(sl, (None, None))[0] for sl in peak_slots]
+    downs = [slot_map.get(sl, (None, None))[1] for sl in peak_slots]
+    up = sum(ups) if all(v is not None for v in ups) else None
+    down = sum(downs) if all(v is not None for v in downs) else None
+    if has_up and has_down:
+      total = up + down if (up is not None and down is not None) else None
+    elif has_down:
+      total = down
+    elif has_up:
+      total = up
+    else:
+      total = None
+    return up, down, total
 
+  base_from, base_to = BASELINE_FIXED
+  exp_from, exp_to = EXPERIMENT
+  stations = {}
+  daily = {}
+  all_days = set()
+  for code, days in by.items():
+    # その地点で上り・下りのデータがそもそも提供されているか判定（9810350のような片方向地点に対応）
+    has_up = any(u is not None for sm in days.values() for u, _ in sm.values())
+    has_down = any(d is not None for sm in days.values() for _, d in sm.values())
 
-def update_baseline(generated_at):
-  path = "traffic_baseline.json"
-  if os.path.exists(path):
-    try:
-      with open(path, encoding="utf-8") as fh:
-        oldj = json.load(fh)
-      if BASELINE_FIXED:
-        # 期間を固定している間は、期間の設定が同じなら作り直さない（履歴が増えても基準は変わらない）
-        want = (hour_code(datetime.datetime.strptime(BASELINE_FIXED[0], "%Y-%m-%d")),
-                hour_code(datetime.datetime.strptime(BASELINE_FIXED[1], "%Y-%m-%d") + datetime.timedelta(hours=23)))
-        if oldj.get("mode") == "fixed" and (oldj["period"]["from"], oldj["period"]["to"]) == want:
-          print("ふだんの交通量: 期間を固定しているので、今回は作り直しません。")
-          return
-      if not BASELINE_FIXED:
-        old = oldj.get("generated_at", "").replace(" JST", "")
-        age = now_jst.replace(tzinfo=None) - datetime.datetime.strptime(old, "%Y-%m-%d %H:%M:%S")
-        if age < datetime.timedelta(hours=BASELINE_REFRESH_HOURS):
-          print("ふだんの交通量: 作成から間もないので、今回は作り直しません。")
-          return
-    except Exception:
-      pass  # 読めなければ作り直す
-  base = build_baseline(generated_at)
-  if base is None:
-    print("ふだんの交通量: 1時間値の履歴がまだ無いので、作成しませんでした。")
-    return
-  with open(path, "w", encoding="utf-8") as out:
-    json.dump(base, out, ensure_ascii=False, separators=(",", ":"))
-  print(f"ふだんの交通量: {len(base['stations'])} 地点分を保存しました（{base['period']['from']}〜{base['period']['to']}）。")
-
-
-# ---- 朝の5分値の保存と、実験前との比較（traffic_experiment.json）----
-# 朝ピーク(7:30〜8:30)を正確に出すには5分値が必要。5分値はAPIが約1か月分しか保持しないため、平日の朝(6:00〜9:55)を保存しておく。
-M5_START_HOUR = 6
-M5_END_HOUR = 10             # 10時の手前まで（6:00〜9:55）
+    base_rows = []
+    for dstr, slot_map in days.items():
+      d = datetime.datetime.strptime(dstr, "%Y%m%d").date()
+      iso = d.strftime("%Y-%m-%d")
+      if base_from <= iso <= base_to and not is_rest_day(d):
+        up, down, total = sums(slot_map, has_up, has_down)
+        if total is not None:
+          base_rows.append((up, down, total))
+    base = None
+    if len(base_rows) >= BASE_MIN_DAYS:
+      totals = [r[2] for r in base_rows]
+      ups_valid = [r[0] for r in base_rows if r[0] is not None]
+      downs_valid = [r[1] for r in base_rows if r[1] is not None]
+      mean = statistics.mean(totals)
+      cv = statistics.pstdev(totals) / mean if mean else 1.0
+      base = {
+          "up": round(statistics.median(ups_valid), 1) if ups_valid else None,
+          "down": round(statistics.median(downs_valid), 1) if downs_valid else None,
+          "total": round(statistics.median(totals), 1),
+          "min": min(totals), "max": max(totals), "n": len(base_rows),
+          "cv": round(cv, 3), "reliable": cv <= RELIABLE_CV,
+      }
+    out_days = {}
+    for dstr, slot_map in sorted(days.items()):
+      d = datetime.datetime.strptime(dstr, "%Y%m%d").date()
+      if is_rest_day(d):
+        continue
+      iso = d.strftime("%Y-%m-%d")
+      up, down, total = sums(slot_map, has_up, has_down)
 M5_MAX_DAYS_PER_RUN = 6      # 1回の実行で取り直す日数の上限（初回の穴埋めは数回に分けて進む）
 M5_COLUMNS = ["time_5m", "code", "type", "up", "down", "abnormal", "fetched_at"]
 M5_TRIED_FILE = os.path.join(HISTORY_DIR, "morning5m_tried.txt")
