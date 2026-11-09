@@ -12,7 +12,7 @@ import urllib.request
 # 南端を 31.293 → 31.285 に広げ、南端ぎりぎりにある地点(9811950)を含める
 BBOX = "130.386,31.285,130.730,31.753"
 
-# 朝のピーク時間帯に10分ごとに更新するとき(FAST_MODE=1)は、時間のかかる処理(履歴の追記・1時間値の穴埋め・基準の作成)を省く
+# 朝のピーク時間帯に高頻度で更新するとき(FAST_MODE=1)は、時間のかかる処理(履歴の追記・1時間値の穴埋め・基準の作成)を省く
 FAST_MODE = os.environ.get("FAST_MODE") == "1"
 
 # 日本時間 (UTC+9) の現在時刻を取得
@@ -238,7 +238,6 @@ def build_series(generated_at):
 
 
 # ---- 1時間値の履歴（欠けた時刻を自動で埋める: history/hourly_YYYYMM.csv）----
-# 実行が飛ばされて記録が欠けても、APIが保持している1時間値（約3か月分）から取り直して埋める。
 HOURLY_COLUMNS = ["time_1h", "code", "type", "up", "down", "abnormal", "fetched_at"]
 HOURLY_RECENT_HOURS = 3      # 毎回取り直す直近の時間数（速報値が後で更新されることがあるため）
 HOURLY_BACKFILL_DAYS = 30    # 何日前まで遡って欠けを埋めるか
@@ -353,14 +352,14 @@ def update_hourly(generated_at):
       rows = fetch_hourly(code_from, code_to, generated_at)
     except Exception as e:
       print(f"1時間値の穴埋めに失敗しました({code_from}〜{code_to}): {e}")
-      break  # 失敗した時は、ここで中断して次回に回す（「取得済み」とは記録しない）
+      break
     upsert(rows)
     got_hours = {r["time_1h"] for r in rows}
     filled += len(rows)
     for m in window:
       c = hour_code(m)
       if c not in got_hours and m < latest_h - datetime.timedelta(hours=HOURLY_SETTLE_HOURS):
-        newly_tried.add(c)  # 取りに行ったが返ってこなかった時刻。次回以降は再取得しない
+        newly_tried.add(c)
     missing = [m for m in missing if m not in set(window)]
   if chunks:
     print(f"1時間値(穴埋め): {chunks} 回のリクエストで {filled} 件を追加しました。残り {len(missing)} 時間分。")
@@ -374,27 +373,20 @@ def update_hourly(generated_at):
 
 
 # ---- 「ふだん」の交通量（比較線用: traffic_baseline.json）----
-# 直近4週間の1時間値から、地点ごと・「平日／休日」ごと・時間帯ごとの中央値を求める。
 BASELINE_DAYS = 28
-BASELINE_MIN_SAMPLES = 3     # 1つの時間帯の標本がこれ未満なら、ふだんの値は出さない
-BASELINE_REFRESH_HOURS = 12  # 何時間ごとに作り直すか（期間を固定しない場合）
+BASELINE_MIN_SAMPLES = 3
+BASELINE_REFRESH_HOURS = 12
 
-# 時差出勤の社会実験（鹿児島市、2026年11月9日〜20日の平日）に合わせ、基準を「実験前」の期間に固定する。
-# 実験期間のデータが「ふだん」に混ざって、基準が動いてしまうのを防ぐため。
-# 固定をやめて、直近28日の移動基準に戻すときは None にする。
-BASELINE_FIXED = ("2026-10-13", "2026-11-06")   # (開始日, 終了日) どちらも含む
-EXPERIMENT = ("2026-11-09", "2026-11-20")        # 社会実験の期間（土日を除く10日間）
-PEAK_START = (7, 30)                              # 朝ピーク時間帯 7:30〜8:30
+BASELINE_FIXED = ("2026-10-13", "2026-11-06")
+EXPERIMENT = ("2026-11-09", "2026-11-20")
+PEAK_START = (7, 30)
 PEAK_END = (8, 30)
-TARGET_PCT = -10                                  # 目標: 朝ピーク交通量の1割削減
+TARGET_PCT = -10
 
-# 日本の祝日（毎年、新しい年の分を追記してください。年末年始(12/29〜1/3)は下の関数で休日扱いにしています）
 JP_HOLIDAYS = {
-    # 2026年
     "2026-01-01", "2026-01-12", "2026-02-11", "2026-02-23", "2026-03-20", "2026-04-29",
     "2026-05-03", "2026-05-04", "2026-05-05", "2026-05-06", "2026-07-20", "2026-08-11",
     "2026-09-21", "2026-09-22", "2026-09-23", "2026-10-12", "2026-11-03", "2026-11-23",
-    # 2027年
     "2027-01-01", "2027-01-11", "2027-02-11", "2027-02-23", "2027-03-21", "2027-03-22",
     "2027-04-29", "2027-05-03", "2027-05-04", "2027-05-05", "2027-07-19", "2027-08-11",
     "2027-09-20", "2027-09-23", "2027-10-11", "2027-11-03", "2027-11-23",
@@ -402,7 +394,7 @@ JP_HOLIDAYS = {
 
 
 def is_rest_day(d):
-  """土日・祝日・年末年始(12/29〜1/3)なら True（交通量の傾向が平日と違う日）"""
+  """土日・祝日・年末年始(12/29〜1/3)なら True"""
   if d.weekday() >= 5 or d.strftime("%Y-%m-%d") in JP_HOLIDAYS:
     return True
   return (d.month == 12 and d.day >= 29) or (d.month == 1 and d.day <= 3)
@@ -417,9 +409,9 @@ def build_baseline(generated_at):
     start = datetime.datetime.strptime(BASELINE_FIXED[0], "%Y-%m-%d")
     ref = datetime.datetime.strptime(BASELINE_FIXED[1], "%Y-%m-%d") + datetime.timedelta(hours=23)
   else:
-    ref = max(parsed.values())  # 履歴の中で最も新しい時刻を基準にする
+    ref = max(parsed.values())
     start = ref - datetime.timedelta(days=BASELINE_DAYS)
-  buckets = {}  # (コード, 'weekday'|'holiday', 時) -> {'up': [...], 'down': [...]}
+  buckets = {}
   types = {}
   for (t, code), r in data.items():
     h = parsed[(t, code)]
@@ -449,7 +441,179 @@ def build_baseline(generated_at):
       "period_text": f"{mmdd(start)}〜{mmdd(ref)}",
       "unit": "台/時",
       "statistic": "median",
-      def sums(slot_map, has_up=True, has_down=True):
+      "days": BASELINE_DAYS,
+      "min_samples": BASELINE_MIN_SAMPLES,
+      "period": {"from": hour_code(start), "to": hour_code(ref)},
+      "holidays": sorted(JP_HOLIDAYS),
+      "stations": stations,
+  }
+
+
+def update_baseline(generated_at):
+  path = "traffic_baseline.json"
+  if os.path.exists(path):
+    try:
+      with open(path, encoding="utf-8") as fh:
+        oldj = json.load(fh)
+      if BASELINE_FIXED:
+        want = (hour_code(datetime.datetime.strptime(BASELINE_FIXED[0], "%Y-%m-%d")),
+                hour_code(datetime.datetime.strptime(BASELINE_FIXED[1], "%Y-%m-%d") + datetime.timedelta(hours=23)))
+        if oldj.get("mode") == "fixed" and (oldj["period"]["from"], oldj["period"]["to"]) == want:
+          print("ふだんの交通量: 期間を固定しているので、今回は作り直しません。")
+          return
+      if not BASELINE_FIXED:
+        old = oldj.get("generated_at", "").replace(" JST", "")
+        age = now_jst.replace(tzinfo=None) - datetime.datetime.strptime(old, "%Y-%m-%d %H:%M:%S")
+        if age < datetime.timedelta(hours=BASELINE_REFRESH_HOURS):
+          print("ふだんの交通量: 作成から間もないので、今回は作り直しません。")
+          return
+    except Exception:
+      pass
+  base = build_baseline(generated_at)
+  if base is None:
+    print("ふだんの交通量: 1時間値の履歴がまだ無いので、作成しませんでした。")
+    return
+  with open(path, "w", encoding="utf-8") as out:
+    json.dump(base, out, ensure_ascii=False, separators=(",", ":"))
+  print(f"ふだんの交通量: {len(base['stations'])} 地点分を保存しました（{base['period']['from']}〜{base['period']['to']}）。")
+
+
+# ---- 朝の5分値の保存と、実験前との比較（traffic_experiment.json）----
+M5_START_HOUR = 6
+M5_END_HOUR = 10
+M5_MAX_DAYS_PER_RUN = 6
+M5_COLUMNS = ["time_5m", "code", "type", "up", "down", "abnormal", "fetched_at"]
+M5_TRIED_FILE = os.path.join(HISTORY_DIR, "morning5m_tried.txt")
+BASE_MIN_DAYS = 8
+RELIABLE_CV = 0.10
+
+
+def morning_slots(day):
+  base = datetime.datetime.combine(day, datetime.time(M5_START_HOUR))
+  return [base + datetime.timedelta(minutes=5 * i) for i in range((M5_END_HOUR - M5_START_HOUR) * 12)]
+
+
+def load_morning():
+  data = {}
+  for path in sorted(glob.glob(os.path.join(HISTORY_DIR, "morning5m_20*.csv"))):
+    with open(path, encoding="utf-8-sig", newline="") as fh:
+      for r in csv.DictReader(fh):
+        data[(r["time_5m"], r["code"])] = r
+  return data
+
+
+def save_morning_months(data, months):
+  for month in sorted(months):
+    keys = sorted(k for k in data if k[0][:6] == month)
+    path = os.path.join(HISTORY_DIR, f"morning5m_{month}.csv")
+    with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+      w = csv.writer(fh)
+      w.writerow(M5_COLUMNS)
+      for k in keys:
+        r = data[k]
+        w.writerow([r[c] for c in M5_COLUMNS])
+
+
+def fetch_morning(code_from, code_to, fetched_at):
+  """常設(様式1)とCCTV(様式3)の5分値を範囲指定で取得する。失敗時は例外"""
+  out = []
+  for kind, type_name, layer in (
+      ("fixed", "常設トラカン", "t_travospublic_measure_5m"),
+      ("cctv", "CCTVトラカン", "t_travospublic_measure_5m_img"),
+  ):
+    for f in fetch(layer, code_from, code_to, raise_on_error=True):
+      p = f.get("properties", {})
+      if p.get("時間コード") is None or p.get("常時観測点コード") is None:
+        continue
+      pt = series_point(p, kind)
+      abnormal = "|".join(k for k, v in flags_of(p).items() if str(v) == "1")
+      out.append({
+          "time_5m": pt["t"], "code": str(p["常時観測点コード"]), "type": type_name,
+          "up": "" if pt["up"] is None else pt["up"],
+          "down": "" if pt["down"] is None else pt["down"],
+          "abnormal": abnormal, "fetched_at": fetched_at,
+      })
+    time.sleep(1.5)
+  return out
+
+
+def update_morning(generated_at):
+  os.makedirs(HISTORY_DIR, exist_ok=True)
+  data = load_morning()
+  tried = set()
+  if os.path.exists(M5_TRIED_FILE):
+    with open(M5_TRIED_FILE, encoding="utf-8") as fh:
+      tried = {line.strip() for line in fh if line.strip()}
+  today = now_jst.date()
+  latest = t5.replace(minute=(t5.minute // 5) * 5, second=0, microsecond=0, tzinfo=None)
+  if BASELINE_FIXED:
+    first_day = datetime.datetime.strptime(BASELINE_FIXED[0], "%Y-%m-%d").date()
+  else:
+    first_day = today - datetime.timedelta(days=28)
+  present = {}
+  for (t, _c) in data:
+    present.setdefault(t[:8], set()).add(t)
+
+  queue = []
+  d = today
+  while d >= first_day:
+    dstr = d.strftime("%Y%m%d")
+    if not is_rest_day(d) and dstr not in tried:
+      avail = [sl for sl in morning_slots(d) if sl <= latest]
+      missing = [sl for sl in avail if sl.strftime("%Y%m%d%H%M") not in present.get(dstr, set())]
+      if missing:
+        queue.append((d, missing))
+    d -= datetime.timedelta(days=1)
+  print(f"朝の5分値: 取り直しが必要な日は {len(queue)} 日分です。")
+
+  dirty = set()
+  newly_tried = set()
+  done = 0
+  for d, missing in queue[:M5_MAX_DAYS_PER_RUN]:
+    code_from = missing[0].strftime("%Y%m%d%H%M")
+    code_to = missing[-1].strftime("%Y%m%d%H%M")
+    code_from, code_to = min(code_from, code_to), max(code_from, code_to)
+    try:
+      rows = fetch_morning(code_from, code_to, generated_at)
+    except Exception as e:
+      print(f"朝の5分値の取得に失敗しました({code_from}〜{code_to}): {e}")
+      break
+    for r in rows:
+      data[(r["time_5m"], r["code"])] = r
+      dirty.add(r["time_5m"][:6])
+    got = {r["time_5m"] for r in rows}
+    done += 1
+    if d < today and any(sl.strftime("%Y%m%d%H%M") not in got for sl in missing):
+      newly_tried.add(d.strftime("%Y%m%d"))
+  if done:
+    print(f"朝の5分値: {done} 日分を取得しました。残り {max(0, len(queue) - done)} 日分。")
+  if dirty:
+    save_morning_months(data, dirty)
+  if newly_tried:
+    with open(M5_TRIED_FILE, "a", encoding="utf-8") as fh:
+      for c in sorted(newly_tried):
+        fh.write(c + "\n")
+
+
+def build_experiment(generated_at):
+  """朝ピーク(7:30〜8:30)の、実験前の平日(中央値)との比較を作る"""
+  data = load_morning()
+  if not data or not BASELINE_FIXED:
+    return None
+  by, types = {}, {}
+  for (t, code), r in data.items():
+    by.setdefault(code, {}).setdefault(t[:8], {})[t[8:]] = (
+        int(r["up"]) if r["up"] != "" else None,
+        int(r["down"]) if r["down"] != "" else None)
+    types[code] = r["type"]
+  peak_slots = []
+  cur = datetime.datetime(2000, 1, 1, PEAK_START[0], PEAK_START[1])
+  end = datetime.datetime(2000, 1, 1, PEAK_END[0], PEAK_END[1])
+  while cur < end:
+    peak_slots.append(cur.strftime("%H%M"))
+    cur += datetime.timedelta(minutes=5)
+
+  def sums(slot_map, has_up=True, has_down=True):
     ups = [slot_map.get(sl, (None, None))[0] for sl in peak_slots]
     downs = [slot_map.get(sl, (None, None))[1] for sl in peak_slots]
     up = sum(ups) if all(v is not None for v in ups) else None
@@ -503,179 +667,6 @@ def build_baseline(generated_at):
         continue
       iso = d.strftime("%Y-%m-%d")
       up, down, total = sums(slot_map, has_up, has_down)
-M5_MAX_DAYS_PER_RUN = 6      # 1回の実行で取り直す日数の上限（初回の穴埋めは数回に分けて進む）
-M5_COLUMNS = ["time_5m", "code", "type", "up", "down", "abnormal", "fetched_at"]
-M5_TRIED_FILE = os.path.join(HISTORY_DIR, "morning5m_tried.txt")
-BASE_MIN_DAYS = 8            # 実験前の基準を出すのに必要な、欠けのない日数
-RELIABLE_CV = 0.10           # 実験前の日ごとのばらつき(変動係数)がこれ以下の地点だけを、まとめの対象にする
-
-
-def morning_slots(day):
-  base = datetime.datetime.combine(day, datetime.time(M5_START_HOUR))
-  return [base + datetime.timedelta(minutes=5 * i) for i in range((M5_END_HOUR - M5_START_HOUR) * 12)]
-
-
-def load_morning():
-  data = {}
-  for path in sorted(glob.glob(os.path.join(HISTORY_DIR, "morning5m_20*.csv"))):
-    with open(path, encoding="utf-8-sig", newline="") as fh:
-      for r in csv.DictReader(fh):
-        data[(r["time_5m"], r["code"])] = r
-  return data
-
-
-def save_morning_months(data, months):
-  for month in sorted(months):
-    keys = sorted(k for k in data if k[0][:6] == month)
-    path = os.path.join(HISTORY_DIR, f"morning5m_{month}.csv")
-    with open(path, "w", encoding="utf-8-sig", newline="") as fh:
-      w = csv.writer(fh)
-      w.writerow(M5_COLUMNS)
-      for k in keys:
-        r = data[k]
-        w.writerow([r[c] for c in M5_COLUMNS])
-
-
-def fetch_morning(code_from, code_to, fetched_at):
-  """常設(様式1)とCCTV(様式3)の5分値を範囲指定で取得する。失敗時は例外"""
-  out = []
-  for kind, type_name, layer in (
-      ("fixed", "常設トラカン", "t_travospublic_measure_5m"),
-      ("cctv", "CCTVトラカン", "t_travospublic_measure_5m_img"),
-  ):
-    for f in fetch(layer, code_from, code_to, raise_on_error=True):
-      p = f.get("properties", {})
-      if p.get("時間コード") is None or p.get("常時観測点コード") is None:
-        continue
-      pt = series_point(p, kind)
-      abnormal = "|".join(k for k, v in flags_of(p).items() if str(v) == "1")
-      out.append({
-          "time_5m": pt["t"], "code": str(p["常時観測点コード"]), "type": type_name,
-          "up": "" if pt["up"] is None else pt["up"],
-          "down": "" if pt["down"] is None else pt["down"],
-          "abnormal": abnormal, "fetched_at": fetched_at,
-      })
-    time.sleep(1.5)  # APIへの負荷を抑える
-  return out
-
-
-def update_morning(generated_at):
-  os.makedirs(HISTORY_DIR, exist_ok=True)
-  data = load_morning()
-  tried = set()
-  if os.path.exists(M5_TRIED_FILE):
-    with open(M5_TRIED_FILE, encoding="utf-8") as fh:
-      tried = {line.strip() for line in fh if line.strip()}
-  today = now_jst.date()
-  latest = t5.replace(minute=(t5.minute // 5) * 5, second=0, microsecond=0, tzinfo=None)
-  if BASELINE_FIXED:
-    first_day = datetime.datetime.strptime(BASELINE_FIXED[0], "%Y-%m-%d").date()
-  else:
-    first_day = today - datetime.timedelta(days=28)
-  present = {}
-  for (t, _c) in data:
-    present.setdefault(t[:8], set()).add(t)
-
-  queue = []  # 新しい日から順に
-  d = today
-  while d >= first_day:
-    dstr = d.strftime("%Y%m%d")
-    if not is_rest_day(d) and dstr not in tried:
-      avail = [sl for sl in morning_slots(d) if sl <= latest]
-      missing = [sl for sl in avail if sl.strftime("%Y%m%d%H%M") not in present.get(dstr, set())]
-      if missing:
-        queue.append((d, missing))
-    d -= datetime.timedelta(days=1)
-  print(f"朝の5分値: 取り直しが必要な日は {len(queue)} 日分です。")
-
-  dirty = set()
-  newly_tried = set()
-  done = 0
-  for d, missing in queue[:M5_MAX_DAYS_PER_RUN]:
-    code_from = missing[0].strftime("%Y%m%d%H%M")
-    code_to = missing[-1].strftime("%Y%m%d%H%M")
-    code_from, code_to = min(code_from, code_to), max(code_from, code_to)
-    try:
-      rows = fetch_morning(code_from, code_to, generated_at)
-    except Exception as e:
-      print(f"朝の5分値の取得に失敗しました({code_from}〜{code_to}): {e}")
-      break  # 失敗した日は「取得済み」と記録せず、次回に回す
-    for r in rows:
-      data[(r["time_5m"], r["code"])] = r
-      dirty.add(r["time_5m"][:6])
-    got = {r["time_5m"] for r in rows}
-    done += 1
-    if d < today and any(sl.strftime("%Y%m%d%H%M") not in got for sl in missing):
-      newly_tried.add(d.strftime("%Y%m%d"))  # 過去の日で、取りに行ったのに返ってこなかった枠がある日は、再取得しない
-  if done:
-    print(f"朝の5分値: {done} 日分を取得しました。残り {max(0, len(queue) - done)} 日分。")
-  if dirty:
-    save_morning_months(data, dirty)
-  if newly_tried:
-    with open(M5_TRIED_FILE, "a", encoding="utf-8") as fh:
-      for c in sorted(newly_tried):
-        fh.write(c + "\n")
-
-
-def build_experiment(generated_at):
-  """朝ピーク(7:30〜8:30)の、実験前の平日(中央値)との比較を作る"""
-  data = load_morning()
-  if not data or not BASELINE_FIXED:
-    return None
-  by, types = {}, {}
-  for (t, code), r in data.items():
-    by.setdefault(code, {}).setdefault(t[:8], {})[t[8:]] = (
-        int(r["up"]) if r["up"] != "" else None,
-        int(r["down"]) if r["down"] != "" else None)
-    types[code] = r["type"]
-  peak_slots = []
-  cur = datetime.datetime(2000, 1, 1, PEAK_START[0], PEAK_START[1])
-  end = datetime.datetime(2000, 1, 1, PEAK_END[0], PEAK_END[1])
-  while cur < end:
-    peak_slots.append(cur.strftime("%H%M"))
-    cur += datetime.timedelta(minutes=5)
-
-  def sums(slot_map):
-    ups = [slot_map.get(sl, (None, None))[0] for sl in peak_slots]
-    downs = [slot_map.get(sl, (None, None))[1] for sl in peak_slots]
-    up = sum(ups) if all(v is not None for v in ups) else None
-    down = sum(downs) if all(v is not None for v in downs) else None
-    total = up + down if (up is not None and down is not None) else None
-    return up, down, total
-
-  base_from, base_to = BASELINE_FIXED
-  exp_from, exp_to = EXPERIMENT
-  stations = {}
-  daily = {}
-  all_days = set()
-  for code, days in by.items():
-    base_rows = []
-    for dstr, slot_map in days.items():
-      d = datetime.datetime.strptime(dstr, "%Y%m%d").date()
-      iso = d.strftime("%Y-%m-%d")
-      if base_from <= iso <= base_to and not is_rest_day(d):
-        up, down, total = sums(slot_map)
-        if total is not None:
-          base_rows.append((up, down, total))
-    base = None
-    if len(base_rows) >= BASE_MIN_DAYS:
-      totals = [r[2] for r in base_rows]
-      mean = statistics.mean(totals)
-      cv = statistics.pstdev(totals) / mean if mean else 1.0
-      base = {
-          "up": round(statistics.median([r[0] for r in base_rows]), 1),
-          "down": round(statistics.median([r[1] for r in base_rows]), 1),
-          "total": round(statistics.median(totals), 1),
-          "min": min(totals), "max": max(totals), "n": len(base_rows),
-          "cv": round(cv, 3), "reliable": cv <= RELIABLE_CV,
-      }
-    out_days = {}
-    for dstr, slot_map in sorted(days.items()):
-      d = datetime.datetime.strptime(dstr, "%Y%m%d").date()
-      if is_rest_day(d):
-        continue
-      iso = d.strftime("%Y-%m-%d")
-      up, down, total = sums(slot_map)
       rec = {"up": up, "down": down, "total": total,
              "phase": "exp" if exp_from <= iso <= exp_to else ("pre" if iso < exp_from else "post")}
       pct = lambda v, b: None if (v is None or not b) else round((v / b - 1) * 100, 1)
@@ -754,7 +745,6 @@ def main():
       }
     return stations[c]
 
-  # 様式1・2（常設トラカン）: 台数 + 停電/ループ異常/超音波異常/欠測フラグ
   for key, feats in (("f1", f1), ("f2", f2)):
     for f in feats:
       p = f["properties"]
@@ -763,14 +753,11 @@ def main():
           "up_l": p.get("上り・大型交通量"),
           "down_s": p.get("下り・小型交通量"),
           "down_l": p.get("下り・大型交通量"),
-          # 車種判別不能（小型・大型に分けられなかった台数）も合計に含める
           "up_u": p.get("上り・車種判別不能交通量"),
           "down_u": p.get("下り・車種判別不能交通量"),
           "flags": flags_of(p),
       }
 
-  # 様式3・4（CCTVトラカン）: 台数 + カメラ状態等のフラグ
-  # 項目名は括弧の全角/半角の違いを吸収して取得する
   for key, feats, suffix in (("f3", f3, "（集計値）"), ("f4", f4, "")):
     for f in feats:
       p = f["properties"]
@@ -791,14 +778,12 @@ def main():
 
   print(f"更新完了: {len(stations)} 地点を保存しました。")
 
-  # 履歴の保存に失敗しても、上の traffic_data.json の更新には影響させない
   if not FAST_MODE:
     try:
       save_history(list(stations.values()))
     except Exception as e:
       print(f"履歴の保存に失敗しました: {e}")
 
-  # グラフ用の過去1時間データ。失敗しても、上の更新には影響させない
   try:
     series = build_series(generated_at)
     with open("traffic_series.json", "w", encoding="utf-8") as out:
@@ -808,29 +793,26 @@ def main():
   except Exception as e:
     print(f"グラフ用データの保存に失敗しました: {e}")
 
-  # 1時間値の履歴（欠けた時刻の穴埋め）。失敗しても、上の更新には影響させない
   if not FAST_MODE:
     try:
       update_hourly(generated_at)
     except Exception as e:
       print(f"1時間値の履歴の更新に失敗しました: {e}")
 
-  # 「ふだん」の交通量（グラフの比較線用）。失敗しても、上の更新には影響させない
-  if not FAST_MODE:
     try:
       update_baseline(generated_at)
     except Exception as e:
       print(f"ふだんの交通量の作成に失敗しました: {e}")
 
-  # 朝の5分値の保存と、実験前との比較。失敗しても、上の更新には影響させない
-  try:
-    update_morning(generated_at)
-  except Exception as e:
-    print(f"朝の5分値の保存に失敗しました: {e}")
-  try:
-    update_experiment(generated_at)
-  except Exception as e:
-    print(f"実験の比較の作成に失敗しました: {e}")
+    try:
+      update_morning(generated_at)
+    except Exception as e:
+      print(f"朝の5分値の保存に失敗しました: {e}")
+
+    try:
+      update_experiment(generated_at)
+    except Exception as e:
+      print(f"実験の比較の作成に失敗しました: {e}")
 
 
 if __name__ == "__main__":
