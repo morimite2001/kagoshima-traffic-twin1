@@ -388,7 +388,7 @@
       return `<tr><td style="text-align:left;">${fmtDay(k)}${phaseTag(d.phase)}</td><td>${cell(d.up)}</td><td>${cell(d.down)}</td><td>${cell(d.total)}</td><td><b>${fmtPct(d.pct)}</b>${ok}</td></tr>`;
     }).join('');
     return `${title}
-      <div style="font-size:10px; color:#374151; margin-top:2px; line-height:1.5;">${e.baseline.text}の中央値: 上り ${Math.round(b.up)} / 下り ${Math.round(b.down)} / 合計 <b>${Math.round(b.total)}</b> 台（${b.n}日分、範囲 ${b.min}〜${b.max}）。
+      <div style="font-size:10px; color:#374151; margin-top:2px; line-height:1.5;">${e.baseline.text}の中央値: 上り ${b.up === null ? '欠測' : Math.round(b.up)} / 下り ${b.down === null ? '欠測' : Math.round(b.down)} / 合計 <b>${Math.round(b.total)}</b> 台（${b.n}日分、範囲 ${b.min}〜${b.max}）。
       ${b.reliable ? '' : '<br><span style="color:#b45309;">※ 実験前の日ごとのばらつきが大きい地点です（全体のまとめの対象外）。</span>'}</div>
       <table class="popup-table" style="margin-top:4px;">
         <tr><th style="text-align:left;">日付</th><th>上り</th><th>下り</th><th>合計</th><th>実験前比</th></tr>
@@ -675,23 +675,25 @@
     };
   }
 
+  // --- 修正後（678行目〜697行目）---
   async function loadTrafficData() {
     const statusLabel = document.getElementById('status-label');
     try {
-      const res = await fetch('./traffic_data.json');
+      const bust = '?t=' + Date.now();
+      const res = await fetch('./traffic_data.json' + bust, { cache: 'no-store' });
       const data = await res.json();
       allStations = data;
 
       // グラフ用データ（失敗してもサイト本体の表示には影響させない）
-      fetch('./traffic_series.json', { cache: 'no-store' })
+      fetch('./traffic_series.json' + bust, { cache: 'no-store' })
         .then((r) => (r.ok ? r.json() : null))
         .then((j) => { seriesData = j; })
         .catch(() => {});
-      fetch('./traffic_baseline.json', { cache: 'no-store' })
+      fetch('./traffic_baseline.json' + bust, { cache: 'no-store' })
         .then((r) => (r.ok ? r.json() : null))
         .then((j) => { baselineData = j; })
         .catch(() => {});
-      fetch('./traffic_experiment.json', { cache: 'no-store' })
+      fetch('./traffic_experiment.json' + bust, { cache: 'no-store' })
         .then((r) => (r.ok ? r.json() : null))
         .then((j) => { experimentData = j; renderExperimentPanel(); })
         .catch(() => { renderExperimentPanel(); });
