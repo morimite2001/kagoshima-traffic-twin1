@@ -2,14 +2,13 @@ name: Update Traffic Data
 
 on:
   schedule:
-    # 通常時：毎時 15分 と 45分 に実行（30分間隔）
-    - cron: '15,45 * * * *'
-    # 朝ピーク時（日本時間 7:00〜9:50 = UTC 22:00〜00:50、月〜金）：10分おきに実行
-    - cron: '5,25,35,55 22-23 * * 0-4'
-    - cron: '5,25,35,55 0 * * 1-5'
+    # 毎時 12分 と 42分 に自動実行（毎時00分・15分・30分・45分の混雑を避けることでスキップされにくくする）
+    - cron: '12,42 * * * *'
+    # 朝ピーク前後のバックアップ起動（日本時間 6:22, 6:52, 7:22, 7:52, 8:22）
+    - cron: '22,52 21-23 * * 0-4'
   workflow_dispatch:
 
-# 重複実行時は古いジョブが詰まらないようにする
+# すでに朝ループが動いているときに重複起動したジョブは、待たずに後続へ任せる
 concurrency:
   group: traffic-data
   cancel-in-progress: false
@@ -17,7 +16,7 @@ concurrency:
 jobs:
   update-data:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 210
     permissions:
       contents: write
 
@@ -37,37 +36,47 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
 
+          # 直近8分以内にすでに更新コミットがある場合は、別ジョブが稼働中とみなして即終了（キュー詰まり防止）
+          last_commit_sec=$(git log -1 --format=%ct || echo 0)
+          now_sec=$(date +%s)
+          if [ $((now_sec - last_commit_sec)) -lt 480 ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "8分以内に更新済みのためスキップします。"
+            exit 0
+          fi
+
           today=$(date +%Y%m%d)
           dow=$(date +%u)
           now=$((10#$(date +%H%M)))
 
-          # 実験期間(11/9〜11/20)のではない平日の朝(7:00〜9:55)に、朝用cron(05,25,35,55分)で起動した場合はスキップ
-          minute=$((10#$(date +%M)))
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            if [ "$minute" != "15" ] && [ "$minute" != "45" ]; then
-              if [ "$today" -lt 20261109 ] || [ "$today" -gt 20261120 ] || [ "$dow" -gt 5 ]; then
-                echo "実験期間の平日ではないためスキップします。"
-                exit 0
+          # 実験期間(11/9〜11/20)の平日の朝(6:00〜9:15)に起動したら、そのまま9:15まで10分おきに更新を続ける
+          # （一度でも起動すれば、GitHubのcronが途中で飛ばされても確実に10分おきに更新されます）
+          if [ "$today" -ge 20261109 ] && [ "$today" -le 20261120 ] && [ "$dow" -le 5 ] && [ "$now" -ge 600 ] && [ "$now" -lt 915 ]; then
+            echo "実験期間の平日の朝のため、9:15まで10分ごとに連続更新します。"
+            while true; do
+              FAST_MODE=1 python update_traffic.py || echo "高速更新エラー"
+
+              git add -A
+              if ! git diff --staged --quiet; then
+                # [skip ci] を付けないことで、10分ごとに毎回 Webサイト(GitHub Pages)も更新する
+                git commit -m "Auto update traffic data (morning peak)"
+                git pull --rebase --autostash || true
+                git push || true
               fi
-            fi
+
+              now=$((10#$(date +%H%M)))
+              if [ "$now" -ge 915 ]; then
+                break
+              fi
+              sleep 600
+            done
           fi
 
-          # 実験期間の平日の朝(7:00〜9:10)は高速モード(FAST_MODE=1)で素早く更新し、
-          # 9:10以降は通常モード(FAST_MODE=0)で朝ピークの実験比較(traffic_experiment.json)も含めて完全更新する
-          if [ "$today" -ge 20261109 ] && [ "$today" -le 20261120 ] && [ "$dow" -le 5 ] && [ "$now" -ge 700 ] && [ "$now" -lt 910 ]; then
-            export FAST_MODE=1
-          else
-            export FAST_MODE=0
-          fi
-
-          python update_traffic.py
+          # 通常更新（朝ループを抜けた直後の 9:15 すぎにも実行し、朝ピーク比較を含む全データを確定保存する）
+          FAST_MODE=0 python update_traffic.py
 
           git add -A
           if ! git diff --staged --quiet; then
-            # 重要：[skip ci] を付けないことで、毎回確実に GitHub Pages のサイト更新を走らせる
             git commit -m "Auto update traffic data"
             git pull --rebase --autostash
             git push
-          else
-            echo "データの変更はありませんでした。"
           fi
