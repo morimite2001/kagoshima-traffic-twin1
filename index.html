@@ -837,20 +837,36 @@
     loadTrafficData();
   });
 
-  // 社会実験の期間の平日の朝（日本時間 7:20〜9:40）は、10分ごとに自動で再読み込みして、最新のデータを表示する。
-  // ポップアップを開いているとき、地図を動かしているとき、画面が非表示のときは、再読み込みしない。
+  // --- 修正後（838〜851行目をこれに置き換え）---
+  // 5分ごとにチェックし、朝ピーク時（平日7:10〜9:40）は10分ごと、それ以外の通常時は30分ごとにデータを自動再取得する。
+  // ページ全体のリロード(location.reload)ではなく loadTrafficData() を呼ぶため、地図の位置がリセットされません。
+  let lastFetchTime = Date.now();
   setInterval(() => {
-    const ex = experimentData && experimentData.experiment;
-    if (!ex) return;
+    if (document.visibilityState !== 'visible' || document.querySelector('.maplibregl-popup') || map.isMoving()) {
+      return;
+    }
     const j = new Date(Date.now() + 9 * 3600000);
     const iso = `${j.getUTCFullYear()}-${String(j.getUTCMonth() + 1).padStart(2, '0')}-${String(j.getUTCDate()).padStart(2, '0')}`;
     const hm = j.getUTCHours() * 100 + j.getUTCMinutes();
     const dow = j.getUTCDay();
-    if (iso >= ex.from && iso <= ex.to && dow >= 1 && dow <= 5 && hm >= 720 && hm <= 940
-        && document.visibilityState === 'visible' && !document.querySelector('.maplibregl-popup') && !map.isMoving()) {
-      location.reload();
+    const ex = experimentData && experimentData.experiment;
+    const isMorningPeak = ex && iso >= ex.from && iso <= ex.to && dow >= 1 && dow <= 5 && hm >= 710 && hm <= 940;
+
+    // 朝ピーク時は9分経過、通常時は28分経過していたらデータを再取得
+    const intervalMs = (isMorningPeak ? 9 : 28) * 60 * 1000;
+    if (Date.now() - lastFetchTime >= intervalMs) {
+      lastFetchTime = Date.now();
+      loadTrafficData();
     }
-  }, 10 * 60 * 1000);
+  }, 60 * 1000); // 1分ごとに条件をチェック（タブを再度開いた直後にもすぐ反応するように）
+
+  // スマホや別タブから画面に戻ってきたとき、前回取得から15分以上経っていれば即座に最新データを取得する
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && Date.now() - lastFetchTime >= 15 * 60 * 1000) {
+      lastFetchTime = Date.now();
+      loadTrafficData();
+    }
+  });
 </script>
 
 </body>
