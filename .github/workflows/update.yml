@@ -2,13 +2,12 @@ name: Update Traffic Data
 
 on:
   schedule:
-    # 毎時 12分 と 42分 に自動実行（毎時00分・15分・30分・45分の混雑を避けることでスキップされにくくする）
+    # 5時間ループのバトンを繋ぐための定期トリガー（どれか1つでも5時間の間に発火すればリレーが継続する）
     - cron: '12,42 * * * *'
-    # 朝ピーク前後のバックアップ起動（日本時間 6:22, 6:52, 7:22, 7:52, 8:22）
-    - cron: '22,52 21-23 * * 0-4'
+    - cron: '27,57 21-23 * * 0-4'
   workflow_dispatch:
 
-# すでに朝ループが動いているときに重複起動したジョブは、待たずに後続へ任せる
+# 実行中の5時間ループがある間、後から来たcronを1つだけ「待機(Pending)」としてキープし、リレーさせる
 concurrency:
   group: traffic-data
   cancel-in-progress: false
@@ -16,7 +15,7 @@ concurrency:
 jobs:
   update-data:
     runs-on: ubuntu-latest
-    timeout-minutes: 210
+    timeout-minutes: 340
     permissions:
       contents: write
 
@@ -29,54 +28,53 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: 交通量データを取得して保存する
+      - name: 交通量データを連続更新する（朝ピーク10分間隔／通常30分間隔・5時間リレー）
         env:
           TZ: Asia/Tokyo
         run: |
           git config --local user.name "github-actions[bot]"
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
 
-          # 直近8分以内にすでに更新コミットがある場合は、別ジョブが稼働中とみなして即終了（キュー詰まり防止）
-          last_commit_sec=$(git log -1 --format=%ct || echo 0)
-          now_sec=$(date +%s)
-          if [ $((now_sec - last_commit_sec)) -lt 480 ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
-            echo "8分以内に更新済みのためスキップします。"
-            exit 0
-          fi
+          start_sec=$(date +%s)
+          # 1回のジョブで5時間（18000秒）連続でループを回す
+          max_duration=18000
 
-          today=$(date +%Y%m%d)
-          dow=$(date +%u)
-          now=$((10#$(date +%H%M)))
+          while true; do
+            today=$(date +%Y%m%d)
+            dow=$(date +%u)
+            now=$((10#$(date +%H%M)))
 
-          # 実験期間(11/9〜11/20)の平日の朝(6:00〜9:15)に起動したら、そのまま9:15まで10分おきに更新を続ける
-          # （一度でも起動すれば、GitHubのcronが途中で飛ばされても確実に10分おきに更新されます）
-          if [ "$today" -ge 20261109 ] && [ "$today" -le 20261120 ] && [ "$dow" -le 5 ] && [ "$now" -ge 600 ] && [ "$now" -lt 915 ]; then
-            echo "実験期間の平日の朝のため、9:15まで10分ごとに連続更新します。"
-            while true; do
-              FAST_MODE=1 python update_traffic.py || echo "高速更新エラー"
+            # 実験期間(11/9〜11/20)の平日の朝(7:00〜9:10)は10分間隔(FAST_MODE=1)、それ以外は30分間隔(FAST_MODE=0)
+            if [ "$today" -ge 20261109 ] && [ "$today" -le 20261120 ] && [ "$dow" -le 5 ] && [ "$now" -ge 700 ] && [ "$now" -lt 910 ]; then
+              export FAST_MODE=1
+              wait_sec=600
+              mode_label="朝ピーク10分間隔モード"
+            else
+              export FAST_MODE=0
+              wait_sec=1800
+              mode_label="通常30分間隔モード"
+            fi
 
-              git add -A
-              if ! git diff --staged --quiet; then
-                # [skip ci] を付けないことで、10分ごとに毎回 Webサイト(GitHub Pages)も更新する
-                git commit -m "Auto update traffic data (morning peak)"
-                git pull --rebase --autostash || true
-                git push || true
-              fi
+            echo "=== [$(date '+%Y-%m-%d %H:%M:%S')] 更新開始 ($mode_label) ==="
+            git pull --rebase --autostash || true
+            python update_traffic.py || echo "Python実行エラー（次回再試行）"
 
-              now=$((10#$(date +%H%M)))
-              if [ "$now" -ge 915 ]; then
-                break
-              fi
-              sleep 600
-            done
-          fi
+            git add -A
+            if ! git diff --staged --quiet; then
+              git commit -m "Auto update traffic data"
+              git pull --rebase --autostash || true
+              git push || echo "push失敗（次回再試行）"
+            else
+              echo "データの変更なし"
+            fi
 
-          # 通常更新（朝ループを抜けた直後の 9:15 すぎにも実行し、朝ピーク比較を含む全データを確定保存する）
-          FAST_MODE=0 python update_traffic.py
+            # 開始から5時間（18000秒）経過していたらループを終了し、待機中(Pending)の次ジョブへバトンを渡す
+            elapsed=$(( $(date +%s) - start_sec ))
+            if [ "$elapsed" -ge "$max_duration" ]; then
+              echo "5時間経過したためジョブを正常終了し、次のジョブへ引き継ぎます。"
+              break
+            fi
 
-          git add -A
-          if ! git diff --staged --quiet; then
-            git commit -m "Auto update traffic data"
-            git pull --rebase --autostash
-            git push
-          fi
+            echo "次の更新まで $((wait_sec / 60)) 分待機します..."
+            sleep $wait_sec
+          done
