@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>鹿児島市周辺 3D交通量モニター（国土交通省 交通量API・参考値）</title>
+  <title>【非公式・個人運営】鹿児島市周辺 3D交通量モニター（交通量API・参考値）</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css"
@@ -43,12 +43,27 @@
     .status-text { margin: 6px 0 0 0; font-size: 11px; line-height: 1.6; color: #10b981; }
     .status-text.warn { color: #f59e0b; }
     .status-text .sub { color: #9ca3af; }
-    .exp-panel { margin-top: 8px; font-size: 11px; line-height: 1.6; color: #d1d5db; background: #0f172a; border: 1px solid #374151; border-radius: 6px; padding: 6px 8px; }
-    .exp-panel summary { cursor: pointer; color: #93c5fd; font-weight: 600; }
-    .exp-panel table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 11px; }
-    .exp-panel th, .exp-panel td { border-bottom: 1px solid #1f2937; padding: 2px 4px; text-align: right; }
-    .exp-panel th:first-child, .exp-panel td:first-child { text-align: left; }
-    .exp-panel .note { color: #9ca3af; font-size: 10px; margin-top: 4px; }
+    .unofficial-badge {
+      display: inline-block;
+      background: #dc2626;
+      color: #ffffff;
+      font-size: 10px;
+      font-weight: bold;
+      padding: 2px 6px;
+      border-radius: 4px;
+      vertical-align: middle;
+      margin-left: 4px;
+    }
+    .unofficial-notice {
+      margin: 6px 0 8px 0;
+      padding: 6px 8px;
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px solid #f59e0b;
+      border-radius: 6px;
+      color: #fde68a;
+      font-size: 10.5px;
+      line-height: 1.5;
+    }
     
     .ranking-list {
       flex: 1;
@@ -205,12 +220,11 @@
     <span id="toggle-icon">▼</span> 交通量ランキング一覧（タップで開閉）
   </div>
   <div class="sidebar-header">
-    <h2>鹿児島市周辺 交通量モニター</h2>
+    <h2>鹿児島市周辺 交通量モニター <span class="unofficial-badge">非公式・個人運営</span></h2>
+    <div class="unofficial-notice">
+      ※ 当サイトは<strong>個人が独自に作成・運営している非公式のWebサイト</strong>です。国（国土交通省）や地方公共団体（鹿児島県・鹿児島市など）の公式サイトではありません。
+    </div>
     <p class="status-text" id="status-label">● 読み込み中…</p>
-    <details class="exp-panel" id="exp-panel">
-      <summary>時差出勤の社会実験（11/9〜20）：朝ピークの実験前比</summary>
-      <div id="exp-body">読み込み中…</div>
-    </details>
   </div>
   <div class="ranking-list" id="ranking-container"></div>
 </div>
@@ -225,9 +239,9 @@
 </div><!-- /#app -->
 
 <footer id="attribution">
-  <div><strong>出典:</strong> 国土交通省 API 機能による交通量(参考値)を加工して作成</div>
-  <div>このサービスは、交通量 API 機能を使用していますが、サービスの内容は国土交通省によって保証されたものではありません。表示値は気象状況・機器状況等により不正確となる場合がある参考値で、国土交通省による正式な交通量の調査結果ではありません。本サービスに関する一切の責任は運営者が負います。
-    データ提供元: <a href="https://www.jartic-open-traffic.org/" target="_blank" rel="noopener">交通量データの提供（オープンデータ）</a></div>
+  <div><strong>【非公式・個人運営サイト】</strong> 当サイトは個人が独自に運営している非公式サイトであり、国や地方公共団体（鹿児島県・鹿児島市等）とは一切関係ありません。</div>
+  <div><strong>出典:</strong> 国土交通省 API 機能による交通量(参考値)を個人で加工して作成（データ提供元: <a href="https://www.jartic-open-traffic.org/" target="_blank" rel="noopener">交通量データの提供（オープンデータ）</a>）</div>
+  <div>このサービスは、交通量 API 機能を使用していますが、サービスの内容は国土交通省や自治体によって保証されたものではありません。表示値や比較値は気象状況・機器状況等により不正確となる場合がある個人の独自試算・参考値であり、公的機関による正式な交通量の調査結果・評価ではありません。本サービスに関する一切の責任は運営者（個人）が負います。</div>
 </footer>
 
 <script>
@@ -331,7 +345,7 @@
       .addTo(map);
   }
 
-  // ---- 時差出勤の社会実験: 朝ピーク(7:30〜8:30)の、実験前との比較（traffic_experiment.json）----
+  // ---- 朝ピーク(7:30〜8:30)の過去比較（個人による独自試算: traffic_experiment.json）----
   const WD = ['日', '月', '火', '水', '木', '金', '土'];
   function fmtDay(dstr) {
     const d = new Date(Date.UTC(+dstr.slice(0, 4), +dstr.slice(4, 6) - 1, +dstr.slice(6, 8)));
@@ -349,52 +363,28 @@
     return post.concat(exp, pre);
   }
 
-  function renderExperimentPanel() {
-    const body = document.getElementById('exp-body');
-    if (!body) return;
-    if (!experimentData) { body.innerHTML = '比較データは、まだありません（次回の更新後に表示されます）。'; return; }
-    const e = experimentData;
-    const days = pickDays(Object.keys(e.daily), (k) => e.daily[k].phase);
-    const hasExp = days.some((k) => e.daily[k].phase === 'exp');
-    const rows = days.map((k) => {
-      const d = e.daily[k];
-      const med = d.median_pct === null ? '—' : fmtPct(d.median_pct);
-      return `<tr><td>${fmtDay(k)}${phaseTag(d.phase)}</td><td>${d.n}</td><td><b>${med}</b></td><td>${d.achieved}/${d.n}</td></tr>`;
-    }).join('');
-    body.innerHTML = `
-      <div>朝ピーク（${e.peak_text}）の台数を、<b>${e.baseline.text}</b>の中央値と比べています。目標は ${e.target_pct}%（朝ピーク交通量の1割削減）です。</div>
-      ${hasExp ? '' : '<div class="note">実験は 11/9 から始まります。下の表は、実験前の最近の平日の様子で、日ごとのばらつきの目安になります。</div>'}
-      <table>
-        <tr><th>日付</th><th>地点数</th><th>中央値の増減</th><th>目標達成</th></tr>
-        ${rows || '<tr><td colspan="4">表示できる日がありません</td></tr>'}
-      </table>
-      <div class="note">地点数＝まとめの対象地点（実験前の日ごとのばらつきが小さい地点のみ）。中央値の増減＝それらの地点の、実験前比の中央値。目標達成＝${e.target_pct}%以下の地点数。
-      天候・行事・工事などの影響も含まれます。国土交通省の観測値（参考値）から算出したもので、実験の公式な評価ではありません。</div>`;
-  }
-
   function buildExperimentBlock(st) {
     const head = (t) => `<div style="margin-top:10px; font-weight:600; font-size:11px; color:#374151;">${t}</div>`;
     if (!experimentData) return '';
     const e = experimentData;
     const info = e.stations && e.stations[st.code];
-    const title = head(`朝ピーク（${e.peak_text}）の実験前比`);
-    if (!info || !info.base) return `${title}<div style="color:#6b7280; font-size:11px; margin-top:4px;">実験前の基準を作るための、欠けのない日数が足りないため、比較できません。</div>`;
+    const title = head(`朝ピーク（${e.peak_text}）の過去比較（個人による独自試算）`);
+    if (!info || !info.base) return `${title}<div style="color:#6b7280; font-size:11px; margin-top:4px;">基準を作るための、欠けのない日数が足りないため、比較できません。</div>`;
     const b = info.base;
     const days = pickDays(Object.keys(info.days), (k) => info.days[k].phase).slice(0, 8);
     const cell = (v) => (v === null || v === undefined ? '欠測' : v);
     const rows = days.map((k) => {
       const d = info.days[k];
-      const ok = typeof d.pct === 'number' && d.pct <= e.target_pct ? ' ✔' : '';
-      return `<tr><td style="text-align:left;">${fmtDay(k)}${phaseTag(d.phase)}</td><td>${cell(d.up)}</td><td>${cell(d.down)}</td><td>${cell(d.total)}</td><td><b>${fmtPct(d.pct)}</b>${ok}</td></tr>`;
+      return `<tr><td style="text-align:left;">${fmtDay(k)}${phaseTag(d.phase)}</td><td>${cell(d.up)}</td><td>${cell(d.down)}</td><td>${cell(d.total)}</td><td><b>${fmtPct(d.pct)}</b></td></tr>`;
     }).join('');
     return `${title}
       <div style="font-size:10px; color:#374151; margin-top:2px; line-height:1.5;">${e.baseline.text}の中央値: 上り ${b.up === null ? '欠測' : Math.round(b.up)} / 下り ${b.down === null ? '欠測' : Math.round(b.down)} / 合計 <b>${Math.round(b.total)}</b> 台（${b.n}日分、範囲 ${b.min}〜${b.max}）。
-      ${b.reliable ? '' : '<br><span style="color:#b45309;">※ 実験前の日ごとのばらつきが大きい地点です（全体のまとめの対象外）。</span>'}</div>
+      ${b.reliable ? '' : '<br><span style="color:#b45309;">※ 日ごとのばらつきが大きい地点です。</span>'}</div>
       <table class="popup-table" style="margin-top:4px;">
-        <tr><th style="text-align:left;">日付</th><th>上り</th><th>下り</th><th>合計</th><th>実験前比</th></tr>
+        <tr><th style="text-align:left;">日付</th><th>上り</th><th>下り</th><th>合計</th><th>増減比</th></tr>
         ${rows}
       </table>
-      <div style="margin-top:2px; color:#6b7280; font-size:10px;">台数は ${e.peak_text} の1時間分。✔ は目標（${e.target_pct}%以下）。欠測＝カメラ異常などで1枠でも値が欠けた日。</div>`;
+      <div style="margin-top:2px; color:#6b7280; font-size:10px;">※台数は ${e.peak_text} の1時間分。サイト運営者（個人）による独自集計の参考値であり、国や自治体の公式な比較・計算方法ではありません。</div>`;
   }
 
   // ---- 過去1時間の5分間交通量グラフ（traffic_series.json）----
@@ -544,7 +534,7 @@
         <path d="${path(movingAvg(up))}" fill="none" stroke="${COLOR_UP}" stroke-width="2"/>
         <path d="${path(movingAvg(down))}" fill="none" stroke="${COLOR_DOWN}" stroke-width="2"/>
       </svg>`;
-    const legend = `<span style="color:${COLOR_UP};">■</span> 上り　<span style="color:${COLOR_DOWN};">■</span> 下り　<span style="color:#6b7280;">${base ? `破線＝${(baselineData && baselineData.label) || 'ふだん'}　` : ''}単位: 台/5分（時刻は日本時間）</span>`;
+    const legend = `<span style="color:${COLOR_UP};">■</span> 上り <span style="color:${COLOR_DOWN};">■</span> 下り <span style="color:#6b7280;">${base ? `破線＝${(baselineData && baselineData.label) || 'ふだん'} ` : ''}単位: 台/5分（時刻は日本時間）</span>`;
     return `${head}
       <div style="color:#b45309; font-size:10px; margin-top:2px;">※ 約20〜50分遅れ・渋滞の度合いを示すものではありません</div>
       <div style="font-size:10px; margin-top:2px;">${legend}</div>
@@ -675,7 +665,6 @@
     };
   }
 
-  // --- 修正後（678行目〜697行目）---
   async function loadTrafficData() {
     const statusLabel = document.getElementById('status-label');
     try {
@@ -695,8 +684,8 @@
         .catch(() => {});
       fetch('./traffic_experiment.json' + bust, { cache: 'no-store' })
         .then((r) => (r.ok ? r.json() : null))
-        .then((j) => { experimentData = j; renderExperimentPanel(); })
-        .catch(() => { renderExperimentPanel(); });
+        .then((j) => { experimentData = j; })
+        .catch(() => {});
 
       // 最終更新時刻(generated_at)・データ時刻・遅延の明示
       const gen = data.find(s => s.generated_at);
@@ -837,7 +826,6 @@
     loadTrafficData();
   });
 
-  // --- 修正後（838〜851行目をこれに置き換え）---
   // 5分ごとにチェックし、朝ピーク時（平日7:10〜9:40）は10分ごと、それ以外の通常時は30分ごとにデータを自動再取得する。
   // ページ全体のリロード(location.reload)ではなく loadTrafficData() を呼ぶため、地図の位置がリセットされません。
   let lastFetchTime = Date.now();
