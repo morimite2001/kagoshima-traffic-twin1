@@ -64,6 +64,24 @@
       font-size: 10.5px;
       line-height: 1.5;
     }
+    .counter-box {
+      margin-top: 8px;
+      padding: 5px 8px;
+      background: #0f172a;
+      border: 1px solid #374151;
+      border-radius: 6px;
+      font-size: 11px;
+      color: #d1d5db;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .counter-box .num {
+      font-weight: bold;
+      color: #60a5fa;
+      font-variant-numeric: tabular-nums;
+      margin-left: 3px;
+    }
     
     .ranking-list {
       flex: 1;
@@ -225,6 +243,10 @@
       ※ 当サイトは<strong>個人が独自に作成・運営している非公式のWebサイト</strong>です。国（国土交通省）や地方公共団体（鹿児島県・鹿児島市など）の公式サイトではありません。
     </div>
     <p class="status-text" id="status-label">● 読み込み中…</p>
+    <div class="counter-box" id="visitor-counter">
+      <span>👥 訪問者数（1日1回加算）</span>
+      <span>本日:<span class="num" id="cnt-today">-</span> ／ 累計:<span class="num" id="cnt-total">-</span></span>
+    </div>
   </div>
   <div class="ranking-list" id="ranking-container"></div>
 </div>
@@ -345,7 +367,7 @@
       .addTo(map);
   }
 
-  // ---- 朝ピーク(7:30〜8:30)の過去比較（個人による独自試算: traffic_experiment.json）----
+  // ---- 時差出勤の社会実験: 朝ピーク(7:30〜8:30)の、実験前との比較（traffic_experiment.json）----
   const WD = ['日', '月', '火', '水', '木', '金', '土'];
   function fmtDay(dstr) {
     const d = new Date(Date.UTC(+dstr.slice(0, 4), +dstr.slice(4, 6) - 1, +dstr.slice(6, 8)));
@@ -534,7 +556,7 @@
         <path d="${path(movingAvg(up))}" fill="none" stroke="${COLOR_UP}" stroke-width="2"/>
         <path d="${path(movingAvg(down))}" fill="none" stroke="${COLOR_DOWN}" stroke-width="2"/>
       </svg>`;
-    const legend = `<span style="color:${COLOR_UP};">■</span> 上り <span style="color:${COLOR_DOWN};">■</span> 下り <span style="color:#6b7280;">${base ? `破線＝${(baselineData && baselineData.label) || 'ふだん'} ` : ''}単位: 台/5分（時刻は日本時間）</span>`;
+    const legend = `<span style="color:${COLOR_UP};">■</span> 上り　<span style="color:${COLOR_DOWN};">■</span> 下り　<span style="color:#6b7280;">${base ? `破線＝${(baselineData && baselineData.label) || 'ふだん'}　` : ''}単位: 台/5分（時刻は日本時間）</span>`;
     return `${head}
       <div style="color:#b45309; font-size:10px; margin-top:2px;">※ 約20〜50分遅れ・渋滞の度合いを示すものではありません</div>
       <div style="font-size:10px; margin-top:2px;">${legend}</div>
@@ -665,6 +687,7 @@
     };
   }
 
+  // --- 修正後（678行目〜697行目）---
   async function loadTrafficData() {
     const statusLabel = document.getElementById('status-label');
     try {
@@ -806,6 +829,45 @@
     }
   }
 
+  // ---- アクセスカウンター（CounterAPI V1: 同一ブラウザは1日1回のみカウントアップ）----
+  async function initVisitorCounter() {
+    const NS = 'morimite2001-kagoshima-traffic-twin1';
+    const jst = new Date(Date.now() + 9 * 3600000);
+    const todayKey = `d_${jst.getUTCFullYear()}${String(jst.getUTCMonth() + 1).padStart(2, '0')}${String(jst.getUTCDate()).padStart(2, '0')}`;
+    const storageKey = 'visited_jst_date';
+    let alreadyVisitedToday = false;
+    try {
+      alreadyVisitedToday = (localStorage.getItem(storageKey) === todayKey);
+    } catch (_) {}
+
+    const base = `https://api.counterapi.dev/v1/${NS}`;
+    const mode = alreadyVisitedToday ? '' : '/up';
+    try {
+      const [rDay, rTot] = await Promise.all([
+        fetch(`${base}/${todayKey}${mode}`, { cache: 'no-store' }),
+        fetch(`${base}/total${mode}`, { cache: 'no-store' })
+      ]);
+      if (rDay.ok) {
+        const dDay = await rDay.json();
+        document.getElementById('cnt-today').innerText = (dDay.count ?? 0).toLocaleString();
+      } else {
+        document.getElementById('cnt-today').innerText = '0';
+      }
+      if (rTot.ok) {
+        const dTot = await rTot.json();
+        document.getElementById('cnt-total').innerText = (dTot.count ?? 0).toLocaleString();
+      } else {
+        document.getElementById('cnt-total').innerText = '0';
+      }
+      if (!alreadyVisitedToday) {
+        try { localStorage.setItem(storageKey, todayKey); } catch (_) {}
+      }
+    } catch (e) {
+      console.warn('Counter error:', e);
+    }
+  }
+  initVisitorCounter();
+
   map.on('load', () => {
     if (map.getSource('openmaptiles')) {
       map.addLayer({
@@ -826,6 +888,7 @@
     loadTrafficData();
   });
 
+  // --- 修正後（838〜851行目をこれに置き換え）---
   // 5分ごとにチェックし、朝ピーク時（平日7:10〜9:40）は10分ごと、それ以外の通常時は30分ごとにデータを自動再取得する。
   // ページ全体のリロード(location.reload)ではなく loadTrafficData() を呼ぶため、地図の位置がリセットされません。
   let lastFetchTime = Date.now();
