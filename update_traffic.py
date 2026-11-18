@@ -713,6 +713,78 @@ def update_experiment(generated_at):
   print(f"実験の比較: {len(exp['stations'])} 地点（実験前の基準あり {n_base} 地点）を保存しました。")
 
 
+
+# ---- 1日ごとのサイト訪問者数の記録（history/visitors.csv）----
+COUNTER_NAMESPACE = "morimite2001-kagoshima-traffic-twin1"
+VISITORS_CSV = os.path.join(HISTORY_DIR, "visitors.csv")
+VISITORS_COLUMNS = ["date", "visitors", "total_cumulative", "updated_at"]
+
+
+def fetch_counter_value(key):
+  """CounterAPI から現在のカウント値を取得する（カウントアップはしない）。未作成のキーは 0 を返す"""
+  url = f"https://api.counterapi.dev/v1/{COUNTER_NAMESPACE}/{key}"
+  req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+  try:
+    with urllib.request.urlopen(req, timeout=15) as r:
+      data = json.loads(r.read().decode("utf-8"))
+      return int(data.get("count", 0))
+  except urllib.error.HTTPError as e:
+    if e.code in (400, 404):
+      return 0
+    raise
+  except Exception as e:
+    print(f"カウンター取得エラー({key}): {e}")
+    return None
+
+
+def update_visitors(generated_at):
+  """直近7日分および本日の日別訪問者数と累計訪問者数を取得し、history/visitors.csv を更新する"""
+  os.makedirs(HISTORY_DIR, exist_ok=True)
+  rows_by_date = {}
+  if os.path.exists(VISITORS_CSV):
+    with open(VISITORS_CSV, encoding="utf-8-sig", newline="") as fh:
+      for r in csv.DictReader(fh):
+        rows_by_date[r["date"]] = r
+
+  total_cnt = fetch_counter_value("total")
+  if total_cnt is None:
+    print("訪問者数: APIから累計値を取得できなかったためスキップします。")
+    return
+
+  today = now_jst.date()
+  # 本日と過去3日分（日付変更直後の取りこぼし防止）を確認・更新する
+  for days_ago in range(3, -1, -1):
+    d = today - datetime.timedelta(days=days_ago)
+    iso_date = d.strftime("%Y-%m-%d")
+    # 2026-11-18より前の過去日は不要ならスキップ（ただし既に記録がある日と当日は更新）
+    if d < datetime.date(2026, 11, 18) and iso_date not in rows_by_date:
+      continue
+    day_key = f"d_{d.strftime('%Y%m%d')}"
+    day_cnt = fetch_counter_value(day_key)
+    if day_cnt is None:
+      continue
+    # 過去日で既に記録があり、かつカウントが変わっていない場合はupdated_atを維持
+    old = rows_by_date.get(iso_date)
+    if old and d < today and str(old.get("visitors")) == str(day_cnt):
+      continue
+    rows_by_date[iso_date] = {
+        "date": iso_date,
+        "visitors": day_cnt,
+        "total_cumulative": total_cnt if d == today else (old.get("total_cumulative", total_cnt) if old else total_cnt),
+        "updated_at": generated_at,
+    }
+
+  with open(VISITORS_CSV, "w", encoding="utf-8-sig", newline="") as fh:
+    w = csv.writer(fh)
+    w.writerow(VISITORS_COLUMNS)
+    for dt_key in sorted(rows_by_date.keys()):
+      r = rows_by_date[dt_key]
+      w.writerow([r[c] for c in VISITORS_COLUMNS])
+  today_iso = today.strftime("%Y-%m-%d")
+  today_v = rows_by_date.get(today_iso, {}).get("visitors", 0)
+  print(f"訪問者数: 本日({today_iso})={today_v}人 / 累計={total_cnt}人 を {VISITORS_CSV} に記録しました。")
+
+
 def main():
   print(f"JARTIC API リクエスト開始: 5分={code_5m} / 1時間={code_1h}" + (" [朝ピーク用の高頻度モード]" if FAST_MODE else ""))
   f1 = fetch("t_travospublic_measure_5m", code_5m)
@@ -814,6 +886,12 @@ def main():
     except Exception as e:
       print(f"実験の比較の作成に失敗しました: {e}")
 
+    try:
+      update_visitors(generated_at)
+    except Exception as e:
+      print(f"訪問者数の記録に失敗しました: {e}")
+
 
 if __name__ == "__main__":
   main()
+GitHub Pages は静的なWebサーバーのため、単
