@@ -6,6 +6,7 @@ import os
 import statistics
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -95,7 +96,6 @@ def fetch(layer, time_code, time_to=None, raise_on_error=False):
     with urllib.request.urlopen(req, timeout=30) as r:
       data = json.loads(r.read().decode("utf-8"))
     if raise_on_error and "features" not in data:
-      # 取得量が大きすぎる場合などは、features の無いエラー応答になる
       raise RuntimeError(f"想定外の応答: {str(data)[:200]}")
     return data.get("features", [])
   except Exception as e:
@@ -162,7 +162,6 @@ def save_history(station_list):
   if not rows:
     print("履歴: 追記なし（同じ時刻のデータは保存済み）")
     return
-  # 新規作成時だけBOM付きにして、Excelでも文字化けしないようにする
   with open(path, "a", encoding="utf-8-sig" if new_file else "utf-8", newline="") as fh:
     w = csv.writer(fh)
     if new_file:
@@ -239,11 +238,11 @@ def build_series(generated_at):
 
 # ---- 1時間値の履歴（欠けた時刻を自動で埋める: history/hourly_YYYYMM.csv）----
 HOURLY_COLUMNS = ["time_1h", "code", "type", "up", "down", "abnormal", "fetched_at"]
-HOURLY_RECENT_HOURS = 3      # 毎回取り直す直近の時間数（速報値が後で更新されることがあるため）
-HOURLY_BACKFILL_DAYS = 30    # 何日前まで遡って欠けを埋めるか
-HOURLY_CHUNK_HOURS = 24      # 1回のリクエストで取得する最大の時間数
-HOURLY_MAX_CHUNKS = 6        # 1回の実行で処理する欠けの塊の最大数（初回の穴埋めは数回に分けて進む）
-HOURLY_SETTLE_HOURS = 3      # この時間を過ぎても返ってこない時刻は「データなし」とみなして再取得しない
+HOURLY_RECENT_HOURS = 3
+HOURLY_BACKFILL_DAYS = 30
+HOURLY_CHUNK_HOURS = 24
+HOURLY_MAX_CHUNKS = 6
+HOURLY_SETTLE_HOURS = 3
 HOURLY_TRIED_FILE = os.path.join(HISTORY_DIR, "hourly_tried.txt")
 
 
@@ -256,7 +255,6 @@ def parse_hour(code):
 
 
 def load_hourly():
-  """history/hourly_*.csv をすべて読み込む。{(time_1h, code): 行} を返す"""
   data = {}
   for path in sorted(glob.glob(os.path.join(HISTORY_DIR, "hourly_20*.csv"))):
     with open(path, encoding="utf-8-sig", newline="") as fh:
@@ -266,7 +264,6 @@ def load_hourly():
 
 
 def save_hourly_months(data, months):
-  """変更のあった月のファイルだけを、時刻・地点コード順に書き直す"""
   for month in sorted(months):
     keys = sorted(k for k in data if k[0][:6] == month)
     path = os.path.join(HISTORY_DIR, f"hourly_{month}.csv")
@@ -279,7 +276,6 @@ def save_hourly_months(data, months):
 
 
 def fetch_hourly(code_from, code_to, fetched_at):
-  """常設(様式2)とCCTV(様式4)の1時間値を、範囲指定でまとめて取得する。失敗時は例外"""
   out = []
   for kind, type_name, layer in (
       ("fixed", "常設トラカン", "t_travospublic_measure_1h"),
@@ -300,7 +296,7 @@ def fetch_hourly(code_from, code_to, fetched_at):
           "abnormal": abnormal,
           "fetched_at": fetched_at,
       })
-    time.sleep(1)  # APIへの負荷を抑える
+    time.sleep(1)
   return out
 
 
@@ -319,13 +315,11 @@ def update_hourly(generated_at):
       data[(r["time_1h"], r["code"])] = r
       dirty_months.add(r["time_1h"][:6])
 
-  # 1) 直近の数時間は毎回取り直して上書きする（1時間集計の速報値が後で更新されることがあるため）
   recent_from = latest_h - datetime.timedelta(hours=HOURLY_RECENT_HOURS - 1)
   rows = fetch_hourly(hour_code(recent_from), code_1h, generated_at)
   upsert(rows)
   print(f"1時間値(直近): {len(rows)} 件を更新しました。")
 
-  # 2) それより前で、記録が1件も無い時刻を探し、新しい方から順に取り直して埋める
   present = {t for (t, _c) in data}
   start_h = latest_h - datetime.timedelta(days=HOURLY_BACKFILL_DAYS)
   boundary = recent_from - datetime.timedelta(hours=1)
@@ -394,7 +388,6 @@ JP_HOLIDAYS = {
 
 
 def is_rest_day(d):
-  """土日・祝日・年末年始(12/29〜1/3)なら True"""
   if d.weekday() >= 5 or d.strftime("%Y-%m-%d") in JP_HOLIDAYS:
     return True
   return (d.month == 12 and d.day >= 29) or (d.month == 1 and d.day <= 3)
@@ -515,7 +508,6 @@ def save_morning_months(data, months):
 
 
 def fetch_morning(code_from, code_to, fetched_at):
-  """常設(様式1)とCCTV(様式3)の5分値を範囲指定で取得する。失敗時は例外"""
   out = []
   for kind, type_name, layer in (
       ("fixed", "常設トラカン", "t_travospublic_measure_5m"),
@@ -596,7 +588,6 @@ def update_morning(generated_at):
 
 
 def build_experiment(generated_at):
-  """朝ピーク(7:30〜8:30)の、実験前の平日(中央値)との比較を作る"""
   data = load_morning()
   if not data or not BASELINE_FIXED:
     return None
@@ -634,7 +625,6 @@ def build_experiment(generated_at):
   daily = {}
   all_days = set()
   for code, days in by.items():
-    # その地点で上り・下りのデータがそもそも提供されているか判定（9810350のような片方向地点に対応）
     has_up = any(u is not None for sm in days.values() for u, _ in sm.values())
     has_down = any(d is not None for sm in days.values() for _, d in sm.values())
 
@@ -713,7 +703,6 @@ def update_experiment(generated_at):
   print(f"実験の比較: {len(exp['stations'])} 地点（実験前の基準あり {n_base} 地点）を保存しました。")
 
 
-
 # ---- 1日ごとのサイト訪問者数の記録（history/visitors.csv）----
 COUNTER_NAMESPACE = "morimite2001-kagoshima-traffic-twin1"
 VISITORS_CSV = os.path.join(HISTORY_DIR, "visitors.csv")
@@ -721,24 +710,24 @@ VISITORS_COLUMNS = ["date", "visitors", "total_cumulative", "updated_at"]
 
 
 def fetch_counter_value(key):
-  """CounterAPI から現在のカウント値を取得する（カウントアップはしない）。未作成のキーは 0 を返す"""
+  """CounterAPI から現在のカウント値を取得する（未作成のキーは 0 を返す）"""
   url = f"https://api.counterapi.dev/v1/{COUNTER_NAMESPACE}/{key}"
   req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
   try:
-    with urllib.request.urlopen(req, timeout=15) as r:
+    with urllib.request.urlopen(req, timeout=10) as r:
       data = json.loads(r.read().decode("utf-8"))
       return int(data.get("count", 0))
   except urllib.error.HTTPError as e:
     if e.code in (400, 404):
       return 0
-    raise
+    return None
   except Exception as e:
     print(f"カウンター取得エラー({key}): {e}")
     return None
 
 
 def update_visitors(generated_at):
-  """直近7日分および本日の日別訪問者数と累計訪問者数を取得し、history/visitors.csv を更新する"""
+  """日別訪問者数と累計訪問者数を取得し、history/visitors.csv を更新する"""
   os.makedirs(HISTORY_DIR, exist_ok=True)
   rows_by_date = {}
   if os.path.exists(VISITORS_CSV):
@@ -748,22 +737,18 @@ def update_visitors(generated_at):
 
   total_cnt = fetch_counter_value("total")
   if total_cnt is None:
-    print("訪問者数: APIから累計値を取得できなかったためスキップします。")
-    return
+    total_cnt = 0
 
   today = now_jst.date()
-  # 本日と過去3日分（日付変更直後の取りこぼし防止）を確認・更新する
   for days_ago in range(3, -1, -1):
     d = today - datetime.timedelta(days=days_ago)
     iso_date = d.strftime("%Y-%m-%d")
-    # 2026-11-18より前の過去日は不要ならスキップ（ただし既に記録がある日と当日は更新）
     if d < datetime.date(2026, 11, 18) and iso_date not in rows_by_date:
       continue
     day_key = f"d_{d.strftime('%Y%m%d')}"
     day_cnt = fetch_counter_value(day_key)
     if day_cnt is None:
       continue
-    # 過去日で既に記録があり、かつカウントが変わっていない場合はupdated_atを維持
     old = rows_by_date.get(iso_date)
     if old and d < today and str(old.get("visitors")) == str(day_cnt):
       continue
@@ -894,4 +879,3 @@ def main():
 
 if __name__ == "__main__":
   main()
-GitHub Pages は静的なWebサーバーのため、単
