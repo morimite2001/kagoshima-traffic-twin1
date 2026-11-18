@@ -9,7 +9,6 @@
         onerror="this.onerror=null; this.href='https://cdn.jsdelivr.net/npm/maplibre-gl@3.6.2/dist/maplibre-gl.css'" />
   <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
   <script>
-    // unpkg から読み込めなかったときの予備（jsDelivr から同じバージョンを読み込む）
     if (typeof maplibregl === 'undefined') {
       document.write('<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@3.6.2/dist/maplibre-gl.js"><\/script>');
     }
@@ -20,7 +19,6 @@
     body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; background: #111827; }
     #app { flex: 1; min-height: 0; display: flex; position: relative; }
     
-    /* PC表示用レイアウト（横並び） */
     #sidebar {
       width: 370px;
       height: 100%;
@@ -116,7 +114,7 @@
     .legend {
       position: absolute;
       top: 14px;
-      right: 56px; /* 右上のズームボタンと重ならない位置 */
+      right: 56px;
       background: rgba(17, 24, 39, 0.9);
       color: #fff;
       padding: 8px 12px;
@@ -130,11 +128,9 @@
     .legend-item { display: flex; align-items: center; gap: 5px; }
     .legend-color { width: 10px; height: 10px; border-radius: 2px; }
 
-    /* ポップアップが画面からはみ出さないよう、高さを制限してスクロールさせる */
     .popup-body { max-height: 58vh; overflow-y: auto; }
     @media (max-width: 768px) {
       .popup-body { max-height: 40vh; }
-      /* スマホでは、地図上の位置に合わせず、画面上部に幅いっぱいで表示する（左端や下部で切れないように） */
       .maplibregl-popup { z-index: 5 !important; position: fixed !important; top: 8px !important; left: 8px !important; right: 8px !important; transform: none !important; max-width: none !important; }
       .maplibregl-popup-tip { display: none !important; }
       .maplibregl-popup-content { width: 100%; box-sizing: border-box; }
@@ -143,7 +139,6 @@
     .popup-table th, .popup-table td { border: 1px solid #d1d5db; padding: 4px 6px; text-align: center; }
     .popup-table th { background: #f3f4f6; color: #374151; }
 
-    /* 出典・免責表示（常に画面下部に表示。交通量API利用規約 第5条・第8条） */
     #attribution {
       flex: none;
       background: #0b1220;
@@ -157,7 +152,6 @@
     #attribution strong { color: #d1d5db; }
     #attribution a { color: #93c5fd; }
 
-    /* モバイル専用切り替えボタン（初期は非表示） */
     #mobile-toggle-bar {
       display: none;
       background: #2563eb;
@@ -170,23 +164,14 @@
       user-select: none;
     }
 
-    /* ============================================================
-       スマートフォン向けスタイル (画面幅 768px 以下)
-       ============================================================ */
     @media screen and (max-width: 768px) {
       #app { flex-direction: column-reverse; }
       #attribution { font-size: 9.5px; padding: 5px 10px; }
-
-      #map {
-        width: 100%;
-        height: 100%;
-        flex: 1;
-      }
-
+      #map { width: 100%; height: 100%; flex: 1; }
       #sidebar {
         width: 100%;
         height: auto;
-        max-height: 48vh; /* 画面下半分に収める */
+        max-height: 48vh;
         position: absolute;
         bottom: 0;
         left: 0;
@@ -196,30 +181,16 @@
         border-top-right-radius: 14px;
         overflow: hidden;
       }
-
       #mobile-toggle-bar {
         display: block;
         border-top-left-radius: 14px;
         border-top-right-radius: 14px;
       }
-
-      .sidebar-header {
-        padding: 10px 14px;
-      }
-
-      .sidebar-header h2 {
-        font-size: 13px;
-      }
-
-      /* 折りたたみ時の挙動 */
-      #sidebar.collapsed {
-        max-height: 42px; /* バーのみ表示 */
-      }
+      .sidebar-header { padding: 10px 14px; }
+      .sidebar-header h2 { font-size: 13px; }
+      #sidebar.collapsed { max-height: 42px; }
       #sidebar.collapsed .sidebar-header,
-      #sidebar.collapsed .ranking-list {
-        display: none;
-      }
-
+      #sidebar.collapsed .ranking-list { display: none; }
       .legend {
         top: auto;
         bottom: 54px;
@@ -258,7 +229,7 @@
     <div class="legend-item"><div class="legend-color" style="background: #6b7280;"></div> データなし・欠測</div>
   </div>
 </div>
-</div><!-- /#app -->
+</div>
 
 <footer id="attribution">
   <div><strong>【非公式・個人運営サイト】</strong> 当サイトは個人が独自に運営している非公式サイトであり、国や地方公共団体（鹿児島県・鹿児島市等）とは一切関係ありません。</div>
@@ -267,10 +238,9 @@
 </footer>
 
 <script>
-  // 地図ライブラリが、どちらの配信元からも読み込めなかったときは、原因が分かる表示を出して止める
   if (typeof maplibregl === 'undefined') {
     document.getElementById('status-label').innerText = '⚠ 地図ライブラリを読み込めませんでした。通信状況を確認して、ページを再読み込みしてください。';
-    throw new Error('maplibregl is not defined（地図ライブラリの読み込みに失敗）');
+    throw new Error('maplibregl is not defined');
   }
   const map = new maplibregl.Map({
     container: 'map',
@@ -284,12 +254,11 @@
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
   let currentPopup = null;
-  let seriesData = null; // traffic_series.json（過去1時間の5分間交通量）
-  let baselineData = null; // traffic_baseline.json（比較の基準。実験前の平日・休日の、時間帯ごとの中央値）
-  let experimentData = null; // traffic_experiment.json（朝ピーク7:30〜8:30の、実験前との比較）
+  let seriesData = null;
+  let baselineData = null;
+  let experimentData = null;
   let allStations = [];
 
-  // スマホ用の開閉トグル関数
   function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
     const icon = document.getElementById('toggle-icon');
@@ -304,11 +273,9 @@
       pitch: 65,
       bearing: -15,
       speed: 1.2,
-      // PC: 柱の右横にポップアップを出すので、地点は画面中央のまま / スマホ: 上部のポップアップを避けて少し下へ
       offset: window.innerWidth > 768 ? [0, 0] : [0, Math.round(window.innerHeight * 0.2)]
     });
 
-    // スマホ時は地点を選択したら邪魔にならないよう自動で下部パネルを閉じる
     if (window.innerWidth <= 768) {
       const sidebar = document.getElementById('sidebar');
       sidebar.classList.add('collapsed');
@@ -317,8 +284,6 @@
 
     if (currentPopup) currentPopup.remove();
 
-    // 値が空(null)の場合は「欠測」、そもそも該当する様式の地点でない場合は「-」
-    // 車種判別不能(up_u/down_u)は古い形式のJSONには無いので、その場合は「-」
     const vu = (x) => (x === undefined ? '-' : (x ?? '欠測'));
     function fmt5m(f) {
       if (!f) return '<td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>';
@@ -367,7 +332,6 @@
       .addTo(map);
   }
 
-  // ---- 時差出勤の社会実験: 朝ピーク(7:30〜8:30)の、実験前との比較（traffic_experiment.json）----
   const WD = ['日', '月', '火', '水', '木', '金', '土'];
   function fmtDay(dstr) {
     const d = new Date(Date.UTC(+dstr.slice(0, 4), +dstr.slice(4, 6) - 1, +dstr.slice(6, 8)));
@@ -376,7 +340,6 @@
   function fmtPct(v) { return v === null || v === undefined ? '欠測' : `${v >= 0 ? '+' : ''}${Math.round(v)}%`; }
   const phaseTag = (ph) => (ph === 'exp' ? '' : '<span style="color:#9ca3af;">（実験前）</span>');
 
-  // 表示する日: 実験期間の日（新しい順）と、実験前の直近3平日
   function pickDays(dayKeys, phaseOf) {
     const sorted = dayKeys.slice().sort().reverse();
     const exp = sorted.filter((k) => phaseOf(k) === 'exp');
@@ -409,8 +372,7 @@
       <div style="margin-top:2px; color:#6b7280; font-size:10px;">※台数は ${e.peak_text} の1時間分。サイト運営者（個人）による独自集計の参考値であり、国や自治体の公式な比較・計算方法ではありません。</div>`;
   }
 
-  // ---- 過去1時間の5分間交通量グラフ（traffic_series.json）----
-  const SLOT_COUNT = 13; // 5分刻みで60分 = 13点
+  const SLOT_COUNT = 13;
   const COLOR_UP = '#3b82f6';
   const COLOR_DOWN = '#ef4444';
 
@@ -420,7 +382,6 @@
     return `${j.getUTCFullYear()}${p2(j.getUTCMonth() + 1)}${p2(j.getUTCDate())}${p2(j.getUTCHours())}${p2(j.getUTCMinutes())}`;
   }
 
-  // 3点移動平均（null は無視。窓内がすべて null なら null）
   function movingAvg(arr) {
     return arr.map((_, i) => {
       const w = arr.slice(Math.max(0, i - 1), i + 2).filter((v) => v !== null);
@@ -434,7 +395,6 @@
     return 10 * pow;
   }
 
-  // 1方向ぶんの傾向を判定する（約1時間前の3点平均と、直近の3点平均を比べる）
   function trendOf(vals) {
     const avg = (xs) => { const a = xs.filter((v) => v !== null); return a.length >= 2 ? a.reduce((x, y) => x + y, 0) / a.length : null; };
     const first = avg(vals.slice(0, 3));
@@ -446,8 +406,6 @@
     return { label, first: Math.round(first), last: Math.round(last) };
   }
 
-  // ---- 「ふだん」の線（traffic_baseline.json）----
-  // 平日／休日の判定: 土日・祝日・年末年始（12/29〜1/3）は休日扱い（祝日の一覧は traffic_baseline.json に入っている）
   function isRestDayMs(ms, holidays) {
     const j = new Date(ms + 9 * 3600000);
     const y = j.getUTCFullYear(), m = j.getUTCMonth() + 1, d = j.getUTCDate(), dow = j.getUTCDay();
@@ -455,7 +413,6 @@
     return dow === 0 || dow === 6 || holidays.includes(key) || (m === 12 && d >= 29) || (m === 1 && d <= 3);
   }
 
-  // 各5分枠の「ふだん」の値（台/5分）。1時間の中央値を12で割り、時間帯の中心どうしを直線でつなぐ。データが無ければ null
   function baselineForSlots(code, slots) {
     const st = baselineData && baselineData.stations && baselineData.stations[code];
     if (!st) return null;
@@ -466,9 +423,9 @@
       slots.forEach((ms) => {
         const table = st[isRestDayMs(ms, holidays) ? 'holiday' : 'weekday'] || {};
         const j = new Date(ms + 9 * 3600000);
-        const pos = j.getUTCHours() + j.getUTCMinutes() / 60 + 2.5 / 60; // その5分枠の中心（時）
+        const pos = j.getUTCHours() + j.getUTCMinutes() / 60 + 2.5 / 60;
         const hv = (h) => { const e = table[String(h)]; return e && typeof e[dir] === 'number' ? e[dir] : null; };
-        const h0 = Math.floor(pos - 0.5);            // 手前の時間帯（その時間の中心は h0+0.5）
+        const h0 = Math.floor(pos - 0.5);
         const frac = pos - (h0 + 0.5);
         const v0 = hv(Math.max(0, Math.min(23, h0)));
         const v1 = hv(Math.max(0, Math.min(23, h0 + 1)));
@@ -481,7 +438,6 @@
     return any ? result : null;
   }
 
-  // 直近3点が「ふだん」と比べてどうか
   function compareText(vals, baseVals) {
     if (!baseVals) return '';
     const last = (arr) => arr.slice(SLOT_COUNT - 3);
@@ -497,7 +453,6 @@
     return `／ ${BL}比: <b>${label}</b>（${pct >= 0 ? '+' : ''}${pct}%）`;
   }
 
-  // 上り・下りそれぞれの傾向を2行で表示する
   function trendLines(up, down, base) {
     const line = (name, color, vals, baseVals) => {
       const t = trendOf(vals);
@@ -556,7 +511,7 @@
         <path d="${path(movingAvg(up))}" fill="none" stroke="${COLOR_UP}" stroke-width="2"/>
         <path d="${path(movingAvg(down))}" fill="none" stroke="${COLOR_DOWN}" stroke-width="2"/>
       </svg>`;
-    const legend = `<span style="color:${COLOR_UP};">■</span> 上り　<span style="color:${COLOR_DOWN};">■</span> 下り　<span style="color:#6b7280;">${base ? `破線＝${(baselineData && baselineData.label) || 'ふだん'}　` : ''}単位: 台/5分（時刻は日本時間）</span>`;
+    const legend = `<span style="color:${COLOR_UP};">■</span> 上り <span style="color:${COLOR_DOWN};">■</span> 下り <span style="color:#6b7280;">${base ? `破線＝${(baselineData && baselineData.label) || 'ふだん'} ` : ''}単位: 台/5分（時刻は日本時間）</span>`;
     return `${head}
       <div style="color:#b45309; font-size:10px; margin-top:2px;">※ 約20〜50分遅れ・渋滞の度合いを示すものではありません</div>
       <div style="font-size:10px; margin-top:2px;">${legend}</div>
@@ -565,8 +520,6 @@
       <div style="margin-top:4px; color:#b45309; font-size:10px; line-height:1.5;">※ 観測から約20〜50分遅れの交通量です。<b>渋滞の度合いを示すものではありません</b>（混雑時は台数が減ることもあります）。実線は3点移動平均、薄い線と点は実測値です。${base ? (baselineData.mode === 'fixed' ? `破線の「${baselineData.label}」は、${baselineData.period_text}の、同じ区分（平日／休日）・同じ時間帯の中央値です。` : '破線の「ふだん」は、過去4週間の、同じ区分（平日／休日）・同じ時間帯の中央値です。') : ''}</div>`;
   }
 
-  // ---- 観測側の異常フラグ（traffic_data.json の flags）を読む補助関数 ----
-  // 項目名の全角/半角の違いを吸収して比較する
   const nz = (str) => String(str).normalize('NFKC').replace(/\s/g, '');
 
   function flagIsOn(flags, name) {
@@ -578,7 +531,6 @@
     return false;
   }
 
-  // CCTV(様式3の5分値)で「1:異常」のときに理由として表示するフラグ
   const CCTV_FLAG_LABELS = [
     ['カメラプリセット位置', 'カメラ位置異常'],
     ['気象影響による映像不良', '気象による映像不良'],
@@ -590,12 +542,10 @@
     ['映像解析機能のフリーズ', '映像解析のフリーズ'],
     ['その他エラー', 'その他エラー'],
   ];
-  // 常設トラカン(様式1・2)の異常フラグ
   const FIXED_FLAG_LABELS = [
     ['停電', '停電'], ['ループ異常', 'ループ異常'], ['超音波異常', '超音波異常'], ['欠測', '欠測フラグ'],
   ];
 
-  // 異常フラグが立っている項目の一覧（フラグが無い古いJSONでは空配列）
   function stationReasons(st) {
     const out = [];
     if (st.type === 'CCTVトラカン') {
@@ -618,22 +568,19 @@
     return !!((st.f1 && st.f1.flags) || (st.f2 && st.f2.flags) || (st.f3 && st.f3.flags));
   }
 
-  // 欠測(null)を 0台 と混同しないための補助関数
   function numOrNull(x) { return (typeof x === 'number') ? x : null; }
 
-  // 1つの様式の方向別合計。全項目が空なら null を返す
   function dirTotal(f, dir) {
     if (!f) return null;
     const tot = numOrNull(f[dir + '_tot']);
     if (tot !== null) return tot;
     const s = numOrNull(f[dir + '_s']);
     const l = numOrNull(f[dir + '_l']);
-    const u = numOrNull(f[dir + '_u']);   // 車種判別不能（古いJSONには無い）
+    const u = numOrNull(f[dir + '_u']);
     if (s === null && l === null && u === null) return null;
     return (s || 0) + (l || 0) + (u || 0);
   }
 
-  // 表示に使う値を選ぶ: 1時間値(様式4→2)を優先し、無ければ5分値(様式3→1)×12で換算
   function pickBasis(st) {
     const order = [['f4', 1, '1時間値'], ['f2', 1, '1時間値'], ['f3', 12, '5分値×12換算'], ['f1', 12, '5分値×12換算']];
     for (const [key, mult, label] of order) {
@@ -643,10 +590,9 @@
         return { up: u === null ? null : u * mult, down: d === null ? null : d * mult, label, converted: mult !== 1 };
       }
     }
-    return null; // 全様式で値が空 = データなし
+    return null;
   }
 
-  // 時間コード(JST, YYYYMMDDhhmm)を表示用に整形
   function parseTc(tc) {
     const y = tc.slice(0, 4), mo = tc.slice(4, 6), d = tc.slice(6, 8), h = tc.slice(8, 10), mi = tc.slice(10, 12);
     return { y, mo, d, h, mi, date: new Date(`${y}-${mo}-${d}T${h}:${mi}:00+09:00`) };
@@ -687,7 +633,6 @@
     };
   }
 
-  // --- 修正後（678行目〜697行目）---
   async function loadTrafficData() {
     const statusLabel = document.getElementById('status-label');
     try {
@@ -696,7 +641,6 @@
       const data = await res.json();
       allStations = data;
 
-      // グラフ用データ（失敗してもサイト本体の表示には影響させない）
       fetch('./traffic_series.json' + bust, { cache: 'no-store' })
         .then((r) => (r.ok ? r.json() : null))
         .then((j) => { seriesData = j; })
@@ -710,7 +654,6 @@
         .then((j) => { experimentData = j; })
         .catch(() => {});
 
-      // 最終更新時刻(generated_at)・データ時刻・遅延の明示
       const gen = data.find(s => s.generated_at);
       const first = data.find(s => s.time_5m && s.time_1h);
       let statusHtml = `● ${data.length} 地点を表示（交通量APIの参考値）`;
@@ -743,8 +686,8 @@
 
         st.nodata = nodata;
         st.basisLabel = nodata ? null : basis.label;
-        st.upRaw = nodata ? null : basis.up;       // null = 欠測
-        st.downRaw = nodata ? null : basis.down;   // null = 欠測
+        st.upRaw = nodata ? null : basis.up;
+        st.downRaw = nodata ? null : basis.down;
         st.totalDisplay = upVal + downVal;
 
         pillarFeatures.push(createPillarPolygon(
@@ -755,7 +698,6 @@
         ));
       });
 
-      // データあり → 交通量の多い順、データなしは末尾
       data.sort((a, b) => (a.nodata - b.nodata) || (b.totalDisplay - a.totalDisplay));
 
       const listContainer = document.getElementById('ranking-container');
@@ -829,11 +771,14 @@
     }
   }
 
-  // ---- アクセスカウンター（CounterAPI V1: 同一ブラウザは1日1回のみカウントアップ）----
+  // ---- アクセスカウンター（1日1回のみカウントアップ + CSVフォールバック付き）----
   async function initVisitorCounter() {
+    const elToday = document.getElementById('cnt-today');
+    const elTotal = document.getElementById('cnt-total');
     const NS = 'morimite2001-kagoshima-traffic-twin1';
     const jst = new Date(Date.now() + 9 * 3600000);
-    const todayKey = `d_${jst.getUTCFullYear()}${String(jst.getUTCMonth() + 1).padStart(2, '0')}${String(jst.getUTCDate()).padStart(2, '0')}`;
+    const ymd = `${jst.getUTCFullYear()}${String(jst.getUTCMonth() + 1).padStart(2, '0')}${String(jst.getUTCDate()).padStart(2, '0')}`;
+    const todayKey = `d_${ymd}`;
     const storageKey = 'visited_jst_date';
     let alreadyVisitedToday = false;
     try {
@@ -849,22 +794,39 @@
       ]);
       if (rDay.ok) {
         const dDay = await rDay.json();
-        document.getElementById('cnt-today').innerText = (dDay.count ?? 0).toLocaleString();
+        elToday.innerText = (dDay.count ?? 0).toLocaleString();
       } else {
-        document.getElementById('cnt-today').innerText = '0';
+        elToday.innerText = '0';
       }
       if (rTot.ok) {
         const dTot = await rTot.json();
-        document.getElementById('cnt-total').innerText = (dTot.count ?? 0).toLocaleString();
+        elTotal.innerText = (dTot.count ?? 0).toLocaleString();
       } else {
-        document.getElementById('cnt-total').innerText = '0';
+        elTotal.innerText = '0';
       }
       if (!alreadyVisitedToday) {
         try { localStorage.setItem(storageKey, todayKey); } catch (_) {}
       }
+      return;
     } catch (e) {
-      console.warn('Counter error:', e);
+      console.warn('CounterAPI blocked or unreachable, falling back to visitors.csv:', e);
     }
+
+    // ブラウザのコンテンツブロッカー等で外部APIがブロックされた場合は history/visitors.csv から表示
+    try {
+      const resCsv = await fetch('./history/visitors.csv?t=' + Date.now(), { cache: 'no-store' });
+      if (resCsv.ok) {
+        const lines = (await resCsv.text()).trim().split('\n');
+        if (lines.length >= 2) {
+          const lastCols = lines[lines.length - 1].split(',');
+          elToday.innerText = Number(lastCols[1] || 0).toLocaleString();
+          elTotal.innerText = Number(lastCols[2] || 0).toLocaleString();
+          return;
+        }
+      }
+    } catch (_) {}
+    elToday.innerText = '1';
+    elTotal.innerText = '1';
   }
   initVisitorCounter();
 
@@ -888,9 +850,6 @@
     loadTrafficData();
   });
 
-  // --- 修正後（838〜851行目をこれに置き換え）---
-  // 5分ごとにチェックし、朝ピーク時（平日7:10〜9:40）は10分ごと、それ以外の通常時は30分ごとにデータを自動再取得する。
-  // ページ全体のリロード(location.reload)ではなく loadTrafficData() を呼ぶため、地図の位置がリセットされません。
   let lastFetchTime = Date.now();
   setInterval(() => {
     if (document.visibilityState !== 'visible' || document.querySelector('.maplibregl-popup') || map.isMoving()) {
@@ -903,15 +862,13 @@
     const ex = experimentData && experimentData.experiment;
     const isMorningPeak = ex && iso >= ex.from && iso <= ex.to && dow >= 1 && dow <= 5 && hm >= 710 && hm <= 940;
 
-    // 朝ピーク時は9分経過、通常時は28分経過していたらデータを再取得
     const intervalMs = (isMorningPeak ? 9 : 28) * 60 * 1000;
     if (Date.now() - lastFetchTime >= intervalMs) {
       lastFetchTime = Date.now();
       loadTrafficData();
     }
-  }, 60 * 1000); // 1分ごとに条件をチェック（タブを再度開いた直後にもすぐ反応するように）
+  }, 60 * 1000);
 
-  // スマホや別タブから画面に戻ってきたとき、前回取得から15分以上経っていれば即座に最新データを取得する
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && Date.now() - lastFetchTime >= 15 * 60 * 1000) {
       lastFetchTime = Date.now();
