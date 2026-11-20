@@ -1,1 +1,1 @@
-# kagoshima-traffic-twin1
+# kagoshima-traffic-twin2026
